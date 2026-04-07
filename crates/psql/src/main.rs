@@ -3,12 +3,12 @@ mod psql;
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(name = "tkpsql", about = "Read-only PostgreSQL query tool for AI agents")]
+#[command(
+    name = "tkpsql",
+    about = "Read-only PostgreSQL query tool for AI agents",
+    after_help = "Config: ~/.config/toolkit/config.toml [psql] section. Override with TOOLKIT_CONFIG env var."
+)]
 struct Cli {
-    /// Config file path (default: ~/.config/tkpsql/config.toml)
-    #[arg(long, global = true)]
-    config: Option<String>,
-
     #[command(subcommand)]
     command: Commands,
 }
@@ -29,7 +29,7 @@ enum Commands {
     },
     /// Describe a table's columns and types
     Describe {
-        /// Table name (optionally schema-qualified)
+        /// Table name (optionally schema-qualified, e.g. public.users)
         #[arg(long)]
         table: String,
     },
@@ -37,7 +37,7 @@ enum Commands {
 
 fn main() {
     let cli = Cli::parse();
-    let config = psql::load_config(cli.config);
+    let config = psql::load_config();
 
     match cli.command {
         Commands::Query { sql } => psql::run_query(&config, &sql),

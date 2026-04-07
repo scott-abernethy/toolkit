@@ -1,7 +1,6 @@
 use common::exit_with_error;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::process::Command;
 
 // ---------------------------------------------------------------------------
@@ -17,32 +16,8 @@ pub struct Config {
     pub password: Option<String>,
 }
 
-pub fn load_config(path: Option<String>) -> Config {
-    let config_path = match path {
-        Some(p) => PathBuf::from(p),
-        None => {
-            let mut p = dirs();
-            p.push("config.toml");
-            p
-        }
-    };
-
-    let contents = std::fs::read_to_string(&config_path).unwrap_or_else(|e| {
-        exit_with_error(format!(
-            "Failed to read config file {}: {}",
-            config_path.display(),
-            e
-        ))
-    });
-
-    toml::from_str(&contents).unwrap_or_else(|e| {
-        exit_with_error(format!("Invalid config file: {}", e))
-    })
-}
-
-fn dirs() -> PathBuf {
-    let home = std::env::var("HOME").unwrap_or_else(|_| exit_with_error("HOME not set"));
-    PathBuf::from(home).join(".config").join("tkpsql")
+pub fn load_config() -> Config {
+    common::load_section::<Config>("psql")
 }
 
 // ---------------------------------------------------------------------------

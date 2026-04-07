@@ -1,5 +1,9 @@
+pub mod config;
+
 use serde::Serialize;
 use std::process;
+
+pub use config::load_section;
 
 /// Standard JSON error output for agent consumption.
 #[derive(Serialize)]

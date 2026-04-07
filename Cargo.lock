@@ -104,6 +104,7 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
+ "toml",
 ]
 
 [[package]]
@@ -281,7 +282,6 @@ dependencies = [
  "csv",
  "serde",
  "serde_json",
- "toml",
 ]
 
 [[package]]

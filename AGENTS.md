@@ -31,6 +31,30 @@ toolkit/
 - **Error output**: write errors as JSON to stdout (not stderr) so agents can parse them. Use `{ "error": "message" }` format.
 - **Dependencies**: prefer widely-used crates (`clap` for args, `serde`/`serde_json` for serialization, `anyhow` for error handling).
 
+## Configuration
+
+All tools share a single config file: `~/.config/toolkit/config.toml`.
+
+Each tool has its own `[section]` within that file:
+
+```toml
+# ~/.config/toolkit/config.toml
+
+[psql]
+host = "localhost"
+port = 5432
+database = "mydb"
+user = "readonly"
+password = "secret"
+
+[anothertool]
+some_setting = "value"
+```
+
+- The config file path can be overridden with the `TOOLKIT_CONFIG` environment variable.
+- Config loading is handled by `common::load_section::<T>("section")` — each tool defines its own config struct and requests its slice.
+- Tools should never expose credentials in their output.
+
 ## Building & Testing
 
 ```sh
