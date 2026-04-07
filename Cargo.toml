@@ -1,0 +1,6 @@
+[workspace]
+members = [
+    "crates/common",
+    "crates/psql",
+]
+resolver = "2"
