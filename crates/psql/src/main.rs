@@ -3,11 +3,7 @@ mod psql;
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(
-    name = "tkpsql",
-    about = "Read-only PostgreSQL query tool for AI agents",
-    after_help = "Config: ~/.config/toolkit/config.toml [psql] section. Override with TOOLKIT_CONFIG env var."
-)]
+#[command(name = "tkpsql", about = "Read-only PostgreSQL query tool for AI agents")]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
