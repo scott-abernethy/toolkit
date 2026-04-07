@@ -28,18 +28,21 @@ just install
 ### tkpsql
 
 ```sh
-# List tables in the public schema
+# List tables (only one connection configured)
 tkpsql tables
 
+# List tables on a named connection
+tkpsql --conn prod tables
+
 # List tables in a specific schema
-tkpsql tables --schema myschema
+tkpsql --conn prod tables --schema myschema
 
 # Run a SQL query
-tkpsql query --sql "SELECT id, name FROM users LIMIT 10"
+tkpsql --conn local query --sql "SELECT id, name FROM users LIMIT 10"
 
 # Describe a table's columns
-tkpsql describe --table users
-tkpsql describe --table myschema.users   # schema-qualified
+tkpsql --conn prod describe --table users
+tkpsql --conn prod describe --table myschema.users   # schema-qualified
 ```
 
 All queries are automatically wrapped in `BEGIN TRANSACTION READ ONLY` — write statements will be rejected by PostgreSQL regardless of the database user's permissions.
@@ -52,20 +55,27 @@ Output is compact JSON:
 
 ## Configuration
 
-All tools share a single config file at `~/.config/toolkit/config.toml`. Each tool has its own `[section]`:
+All tools share a single config file at `~/.config/toolkit/config.toml`. Each tool has its own `[section]`, and `tkpsql` supports multiple named connections within its section:
 
 ```toml
 # ~/.config/toolkit/config.toml
 
-[psql]
+[psql.local]
 host     = "localhost"
+port     = 5432
+database = "mydb"
+user     = "readonly"
+password = "secret"
+
+[psql.prod]
+host     = "prod.example.com"
 port     = 5432
 database = "mydb"
 user     = "readonly"
 password = "secret"
 ```
 
-Override the config file path with `TOOLKIT_CONFIG=/path/to/other.toml`.
+If only one connection is configured, `--conn` can be omitted. Override the config file path with `TOOLKIT_CONFIG=/path/to/other.toml`.
 
 ## Development
 

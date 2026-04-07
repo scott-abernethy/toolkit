@@ -40,8 +40,15 @@ Each tool has its own `[section]` within that file:
 ```toml
 # ~/.config/toolkit/config.toml
 
-[psql]
+[psql.local]
 host = "localhost"
+port = 5432
+database = "mydb"
+user = "readonly"
+password = "secret"
+
+[psql.prod]
+host = "prod.example.com"
 port = 5432
 database = "mydb"
 user = "readonly"

@@ -8,7 +8,7 @@ use std::process::Command;
 // ---------------------------------------------------------------------------
 
 #[derive(Deserialize)]
-pub struct Config {
+pub struct ConnConfig {
     pub host: String,
     pub port: u16,
     pub database: String,
@@ -16,27 +16,48 @@ pub struct Config {
     pub password: Option<String>,
 }
 
-pub fn load_config() -> Config {
-    common::load_section::<Config>("psql")
+/// Load a named connection from the [psql] section of the shared config.
+/// If `conn` is None and exactly one connection is configured, that one is used.
+/// If `conn` is None and multiple connections are configured, exits with an error
+/// listing the available names.
+pub fn load_config(conn: Option<&str>) -> ConnConfig {
+    let mut configs = common::load_section::<HashMap<String, ConnConfig>>("psql");
+
+    match conn {
+        Some(name) => configs.remove(name).unwrap_or_else(|| {
+            let available = sorted_keys(&configs);
+            exit_with_error(format!(
+                "Unknown connection '{}'. Available: {}",
+                name,
+                available.join(", ")
+            ))
+        }),
+        None => {
+            if configs.len() == 1 {
+                configs.into_values().next().unwrap()
+            } else {
+                let available = sorted_keys(&configs);
+                exit_with_error(format!(
+                    "Multiple connections configured, specify --conn. Available: {}",
+                    available.join(", ")
+                ))
+            }
+        }
+    }
+}
+
+fn sorted_keys(map: &HashMap<String, ConnConfig>) -> Vec<String> {
+    let mut keys: Vec<String> = map.keys().cloned().collect();
+    keys.sort();
+    keys
 }
 
 // ---------------------------------------------------------------------------
 // Query execution via psql
 // ---------------------------------------------------------------------------
 
-/// Wraps the user query in a read-only transaction.
-fn readonly_sql(sql: &str) -> String {
-    // Strip trailing semicolons/whitespace so we can wrap cleanly
-    let trimmed = sql.trim().trim_end_matches(';').trim();
-    format!(
-        "BEGIN TRANSACTION READ ONLY;\n{trimmed};\nCOMMIT;"
-    )
-}
-
 /// Runs psql and returns the raw stdout as a string.
-fn exec_psql(config: &Config, sql: &str) -> String {
-    let wrapped = readonly_sql(sql);
-
+fn exec_psql(config: &ConnConfig, sql: &str) -> String {
     let mut cmd = Command::new("psql");
     cmd.arg("-h").arg(&config.host)
         .arg("-p").arg(config.port.to_string())
@@ -44,7 +65,8 @@ fn exec_psql(config: &Config, sql: &str) -> String {
         .arg("-d").arg(&config.database)
         .arg("--no-psqlrc")
         .arg("--csv")
-        .arg("-c").arg(&wrapped);
+        .arg("-c").arg(sql)
+        .env("PGOPTIONS", "-c default_transaction_read_only=on");
 
     if let Some(pw) = &config.password {
         cmd.env("PGPASSWORD", pw);
@@ -101,17 +123,15 @@ struct QueryResponse {
     count: usize,
 }
 
-pub fn run_query(config: &Config, sql: &str) {
+pub fn run_query(config: &ConnConfig, sql: &str) {
     let raw = exec_psql(config, sql);
-    // psql --csv output with BEGIN/COMMIT will have "BEGIN" and "COMMIT" lines
-    let csv_part = extract_csv(&raw);
-    let rows = csv_to_json(&csv_part);
+    let rows = csv_to_json(&raw);
     let count = rows.len();
     let resp = QueryResponse { rows, count };
     println!("{}", serde_json::to_string(&resp).unwrap());
 }
 
-pub fn list_tables(config: &Config, schema: &str) {
+pub fn list_tables(config: &ConnConfig, schema: &str) {
     let sql = format!(
         "SELECT table_name FROM information_schema.tables \
          WHERE table_schema = '{}' ORDER BY table_name",
@@ -120,7 +140,7 @@ pub fn list_tables(config: &Config, schema: &str) {
     run_query(config, &sql);
 }
 
-pub fn describe_table(config: &Config, table: &str) {
+pub fn describe_table(config: &ConnConfig, table: &str) {
     // Support optional schema qualification
     let (schema, tbl) = if table.contains('.') {
         let parts: Vec<&str> = table.splitn(2, '.').collect();
@@ -140,38 +160,9 @@ pub fn describe_table(config: &Config, table: &str) {
     run_query(config, &sql);
 }
 
-/// Extract the CSV portion from psql output, skipping BEGIN/COMMIT markers.
-fn extract_csv(raw: &str) -> String {
-    raw.lines()
-        .filter(|line| {
-            let l = line.trim();
-            l != "BEGIN" && l != "COMMIT"
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_readonly_sql_wraps_query() {
-        let sql = "SELECT * FROM users;";
-        let wrapped = readonly_sql(sql);
-        assert!(wrapped.starts_with("BEGIN TRANSACTION READ ONLY;"));
-        assert!(wrapped.contains("SELECT * FROM users;"));
-        assert!(wrapped.ends_with("COMMIT;"));
-    }
-
-    #[test]
-    fn test_readonly_sql_strips_trailing_semicolons() {
-        let sql = "SELECT 1;;;  ";
-        let wrapped = readonly_sql(sql);
-        assert!(wrapped.contains("SELECT 1;"));
-        // Should not have triple semicolons
-        assert!(!wrapped.contains(";;;"));
-    }
 
     #[test]
     fn test_csv_to_json_basic() {
@@ -188,12 +179,5 @@ mod tests {
         let csv = "";
         let rows = csv_to_json(csv);
         assert!(rows.is_empty());
-    }
-
-    #[test]
-    fn test_extract_csv_strips_markers() {
-        let raw = "BEGIN\nname,age\nAlice,30\nCOMMIT\n";
-        let csv = extract_csv(raw);
-        assert_eq!(csv, "name,age\nAlice,30");
     }
 }

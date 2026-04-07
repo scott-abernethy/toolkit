@@ -5,6 +5,10 @@ use clap::{Parser, Subcommand};
 #[derive(Parser)]
 #[command(name = "tkpsql", about = "Read-only PostgreSQL query tool for AI agents")]
 struct Cli {
+    /// Named connection from config (e.g. local, prod). Required if multiple connections are configured.
+    #[arg(long, global = true)]
+    conn: Option<String>,
+
     #[command(subcommand)]
     command: Commands,
 }
@@ -33,7 +37,7 @@ enum Commands {
 
 fn main() {
     let cli = Cli::parse();
-    let config = psql::load_config();
+    let config = psql::load_config(cli.conn.as_deref());
 
     match cli.command {
         Commands::Query { sql } => psql::run_query(&config, &sql),
