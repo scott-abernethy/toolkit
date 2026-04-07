@@ -12,79 +12,15 @@ Tools are designed to be invoked by AI agents (e.g. from [opencode](https://open
 
 ## Prerequisites
 
-**Rust toolchain** via [asdf](https://asdf-vm.com):
+- [asdf](https://asdf-vm.com) with the rust plugin: `asdf plugin add rust && asdf install`
+- [just](https://github.com/casey/just): `brew install just`
+- `~/.cargo/bin` on your `PATH`: add `export PATH="$HOME/.cargo/bin:$PATH"` to your `~/.zshrc`
+- **For `tkpsql`**: `brew install libpq && brew link --force libpq`
+
+## Install
 
 ```sh
-asdf plugin add rust
-asdf install        # reads .tool-versions in this repo
-```
-
-**For `tkpsql`**: `psql` must be installed and on your `PATH`.
-
-```sh
-brew install libpq
-brew link --force libpq   # puts psql on PATH
-```
-
-## Building
-
-```sh
-# Build all tools
-cargo build --workspace
-
-# Build a specific tool
-cargo build -p tkpsql
-
-# Build optimised release binaries
-cargo build --workspace --release
-```
-
-Binaries are output to `target/debug/` or `target/release/`.
-
-## Installing
-
-`cargo install` compiles a release binary and places it in your Cargo bin directory. When using asdf-managed Rust this is `~/.asdf/installs/rust/<version>/bin/` rather than the default `~/.cargo/bin/` — this is normal.
-
-After installing, run `asdf reshim rust` to make the binary available on your PATH via asdf's shim layer.
-
-```sh
-# Install a specific tool from a local clone
-cargo install --path crates/psql
-asdf reshim rust
-
-# Install all tools at once
-for crate in crates/*/; do cargo install --path "$crate"; done
-asdf reshim rust
-
-# Verify
-tkpsql --help
-
-# Uninstall
-cargo uninstall tkpsql
-asdf reshim rust
-```
-
-> **Updating**: re-run `cargo install --path ...` and `asdf reshim rust` after pulling new changes.
-
-## Configuration
-
-All tools share a single config file at `~/.config/toolkit/config.toml`. Each tool has its own `[section]`:
-
-```toml
-# ~/.config/toolkit/config.toml
-
-[psql]
-host     = "localhost"
-port     = 5432
-database = "mydb"
-user     = "readonly"
-password = "secret"
-```
-
-To use a different config file (e.g. for CI or multiple environments):
-
-```sh
-TOOLKIT_CONFIG=/path/to/other.toml tkpsql tables
+just install
 ```
 
 ## Usage
@@ -104,10 +40,6 @@ tkpsql query --sql "SELECT id, name FROM users LIMIT 10"
 # Describe a table's columns
 tkpsql describe --table users
 tkpsql describe --table myschema.users   # schema-qualified
-
-# Help
-tkpsql --help
-tkpsql query --help
 ```
 
 All queries are automatically wrapped in `BEGIN TRANSACTION READ ONLY` — write statements will be rejected by PostgreSQL regardless of the database user's permissions.
@@ -118,20 +50,30 @@ Output is compact JSON:
 {"rows":[{"id":"1","name":"Alice"},{"id":"2","name":"Bob"}],"count":2}
 ```
 
+## Configuration
+
+All tools share a single config file at `~/.config/toolkit/config.toml`. Each tool has its own `[section]`:
+
+```toml
+# ~/.config/toolkit/config.toml
+
+[psql]
+host     = "localhost"
+port     = 5432
+database = "mydb"
+user     = "readonly"
+password = "secret"
+```
+
+Override the config file path with `TOOLKIT_CONFIG=/path/to/other.toml`.
+
 ## Development
 
 ```sh
-# Run all tests
-cargo test --workspace
-
-# Lint
-cargo clippy --workspace
-
-# Format
-cargo fmt --all
-
-# Run a tool without installing
-cargo run -p tkpsql -- tables
+just build    # build all tools
+just test     # run all tests
+just lint     # clippy
+just fmt      # format
 ```
 
 ## Adding a New Tool
