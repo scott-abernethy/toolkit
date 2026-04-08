@@ -1,7 +1,12 @@
+use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
 use common::exit_with_error;
+use native_tls::TlsConnector;
+use postgres::types::Type;
+use postgres_native_tls::MakeTlsConnector;
 use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
 use std::collections::HashMap;
-use std::process::Command;
+use uuid::Uuid;
 
 // ---------------------------------------------------------------------------
 // Config
@@ -14,6 +19,8 @@ pub struct ConnConfig {
     pub database: String,
     pub user: String,
     pub password: Option<String>,
+    /// Use TLS for this connection (default: false).
+    pub tls: Option<bool>,
     /// Tables the agent is permitted to write to (INSERT/UPDATE/DELETE/TRUNCATE).
     /// If absent or empty, the connection is treated as strictly read-only.
     pub writable_tables: Option<Vec<String>>,
@@ -24,6 +31,10 @@ impl ConnConfig {
         self.writable_tables
             .as_ref()
             .map_or(true, |t| t.is_empty())
+    }
+
+    fn use_tls(&self) -> bool {
+        self.tls.unwrap_or(false)
     }
 }
 
@@ -77,20 +88,15 @@ fn strip_schema(name: &str) -> &str {
 fn detect_write_target(sql: &str) -> Option<String> {
     let upper = sql.to_uppercase();
 
-    // Patterns: (keyword, whether to skip an extra word after keyword)
-    // INSERT INTO <table>
-    // UPDATE <table>
-    // DELETE FROM <table>
-    // TRUNCATE [TABLE] <table>
-    let candidates: &[(&str, bool)] = &[
-        ("INSERT INTO ", false),
-        ("UPDATE ", false),
-        ("DELETE FROM ", false),
-        ("TRUNCATE TABLE ", false),
-        ("TRUNCATE ", false),
+    let keywords: &[&str] = &[
+        "INSERT INTO ",
+        "UPDATE ",
+        "DELETE FROM ",
+        "TRUNCATE TABLE ",
+        "TRUNCATE ",
     ];
 
-    for (keyword, _) in candidates {
+    for keyword in keywords {
         if let Some(pos) = upper.find(keyword) {
             let after = sql[pos + keyword.len()..].trim_start();
             let table: String = after
@@ -124,155 +130,167 @@ fn assert_write_allowed(config: &ConnConfig, table: &str) {
 }
 
 // ---------------------------------------------------------------------------
-// Query execution via psql
+// Connection
 // ---------------------------------------------------------------------------
 
-/// Runs psql and returns the raw stdout as a string.
-fn exec_psql(config: &ConnConfig, sql: &str) -> String {
-    let mut cmd = Command::new("psql");
-    cmd.arg("-h")
-        .arg(&config.host)
-        .arg("-p")
-        .arg(config.port.to_string())
-        .arg("-U")
-        .arg(&config.user)
-        .arg("-d")
-        .arg(&config.database)
-        .arg("--no-psqlrc")
-        .arg("--csv")
-        .arg("-c")
-        .arg(sql);
-
-    // Keep the DB-level read-only guard when no writable tables are configured —
-    // two independent layers of enforcement for pure read-only connections.
-    if config.is_readonly() {
-        cmd.env("PGOPTIONS", "-c default_transaction_read_only=on");
-    }
+fn connect(config: &ConnConfig) -> postgres::Client {
+    let mut cfg = postgres::Config::new();
+    cfg.host(&config.host)
+        .port(config.port)
+        .dbname(&config.database)
+        .user(&config.user);
 
     if let Some(pw) = &config.password {
-        cmd.env("PGPASSWORD", pw);
+        cfg.password(pw);
     }
 
-    let output = cmd
-        .output()
-        .unwrap_or_else(|e| exit_with_error(format!("Failed to execute psql: {}", e)));
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        exit_with_error(sanitize_psql_error(&stderr));
+    // Enforce read-only at the session level for connections with no write tables.
+    if config.is_readonly() {
+        cfg.options("-c default_transaction_read_only=on");
     }
 
-    String::from_utf8_lossy(&output.stdout).into_owned()
-}
-
-/// Classify a raw psql stderr message into a concise, credential-safe error string.
-fn sanitize_psql_error(stderr: &str) -> String {
-    let lower = stderr.to_lowercase();
-    // More specific patterns first to avoid being swallowed by broad connection checks.
-    if lower.contains("password authentication failed") || lower.contains("authentication failed") {
-        "authentication failed".to_string()
-    } else if lower.contains("timeout") || lower.contains("timed out") {
-        "connection timed out".to_string()
-    } else if lower.contains("connection refused") || lower.contains("connection to server") {
-        "connection refused".to_string()
-    } else if lower.contains("database") && lower.contains("does not exist") {
-        "database does not exist".to_string()
-    } else if lower.contains("role") && lower.contains("does not exist") {
-        "role does not exist".to_string()
-    } else if lower.contains("permission denied") || lower.contains("insufficient privilege") {
-        "permission denied".to_string()
-    } else if lower.contains("ssl") {
-        "ssl error".to_string()
+    if config.use_tls() {
+        let tls = TlsConnector::builder()
+            .build()
+            .unwrap_or_else(|e| exit_with_error(format!("tls error: {}", e)));
+        let connector = MakeTlsConnector::new(tls);
+        cfg.connect(connector)
+            .unwrap_or_else(|e| exit_with_error(sanitize_pg_error(&e)))
     } else {
-        // Emit only the first line to avoid multi-line noise; strip any
-        // host/port fragments that might appear in unknown messages.
-        let first_line = stderr.lines().next().unwrap_or("unknown error");
-        let cleaned = regex_strip_conn_details(first_line);
-        format!("psql error: {}", cleaned.trim())
+        cfg.connect(postgres::NoTls)
+            .unwrap_or_else(|e| exit_with_error(sanitize_pg_error(&e)))
     }
 }
 
-/// Best-effort removal of host/port fragments from an arbitrary psql error line.
-/// Strips patterns like `at "hostname"`, `(address)`, and `, port NNNN`.
-fn regex_strip_conn_details(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    let bytes = s.as_bytes();
-    let mut i = 0;
-    while i < bytes.len() {
-        // Skip `, port <digits>`
-        if s[i..].starts_with(", port ") {
-            i += 7;
-            while i < bytes.len() && bytes[i].is_ascii_digit() {
-                i += 1;
-            }
-            continue;
-        }
-        // Skip `at "..."`
-        if s[i..].starts_with("at \"") {
-            i += 4;
-            while i < bytes.len() && bytes[i] != b'"' {
-                i += 1;
-            }
-            if i < bytes.len() {
-                i += 1; // closing quote
-            }
-            continue;
-        }
-        // Skip `(...)` — IP address groups
-        if bytes[i] == b'(' {
-            while i < bytes.len() && bytes[i] != b')' {
-                i += 1;
-            }
-            if i < bytes.len() {
-                i += 1;
-            }
-            continue;
-        }
-        out.push(bytes[i] as char);
-        i += 1;
+// ---------------------------------------------------------------------------
+// Error sanitisation
+// ---------------------------------------------------------------------------
+
+fn sanitize_pg_error(e: &postgres::Error) -> String {
+    let msg = e.to_string().to_lowercase();
+    if msg.contains("password authentication failed") || msg.contains("authentication failed") {
+        "authentication failed".to_string()
+    } else if msg.contains("timeout") || msg.contains("timed out") {
+        "connection timed out".to_string()
+    } else if msg.contains("connection refused") || msg.contains("connection to server") {
+        "connection refused".to_string()
+    } else if msg.contains("database") && msg.contains("does not exist") {
+        "database does not exist".to_string()
+    } else if msg.contains("role") && msg.contains("does not exist") {
+        "role does not exist".to_string()
+    } else if msg.contains("permission denied") || msg.contains("insufficient privilege") {
+        "permission denied".to_string()
+    } else if msg.contains("ssl") || msg.contains("tls") {
+        "ssl error".to_string()
+    } else if let Some(db_err) = e.as_db_error() {
+        db_err.message().to_string()
+    } else {
+        "query error".to_string()
     }
-    // Collapse multiple spaces
-    let mut result = String::with_capacity(out.len());
-    let mut prev_space = false;
-    for ch in out.chars() {
-        if ch == ' ' {
-            if !prev_space {
-                result.push(ch);
-            }
-            prev_space = true;
-        } else {
-            result.push(ch);
-            prev_space = false;
-        }
-    }
-    result
 }
 
 // ---------------------------------------------------------------------------
-// CSV → JSON conversion
+// Type → JSON mapping
 // ---------------------------------------------------------------------------
 
-fn csv_to_json(csv_text: &str) -> Vec<HashMap<String, String>> {
-    let mut reader = csv::ReaderBuilder::new()
-        .has_headers(true)
-        .from_reader(csv_text.as_bytes());
+fn cell_to_json(row: &postgres::Row, i: usize) -> Value {
+    let ty = row.columns()[i].type_();
+    match *ty {
+        Type::BOOL => row
+            .get::<_, Option<bool>>(i)
+            .map(Value::Bool)
+            .unwrap_or(Value::Null),
 
-    let headers: Vec<String> = match reader.headers() {
-        Ok(h) => h.iter().map(|s| s.to_string()).collect(),
-        Err(_) => return vec![],
-    };
+        Type::INT2 => row
+            .get::<_, Option<i16>>(i)
+            .map(|v| Value::Number(v.into()))
+            .unwrap_or(Value::Null),
 
-    reader
-        .records()
-        .filter_map(|r| r.ok())
-        .map(|record| {
-            headers
-                .iter()
-                .enumerate()
-                .map(|(i, h)| (h.clone(), record.get(i).unwrap_or("").to_string()))
-                .collect()
-        })
+        Type::INT4 => row
+            .get::<_, Option<i32>>(i)
+            .map(|v| Value::Number(v.into()))
+            .unwrap_or(Value::Null),
+
+        Type::INT8 => row
+            .get::<_, Option<i64>>(i)
+            .map(|v| Value::Number(v.into()))
+            .unwrap_or(Value::Null),
+
+        Type::FLOAT4 => row
+            .get::<_, Option<f32>>(i)
+            .map(|v| {
+                serde_json::Number::from_f64(v as f64)
+                    .map(Value::Number)
+                    .unwrap_or(Value::Null)
+            })
+            .unwrap_or(Value::Null),
+
+        Type::FLOAT8 => row
+            .get::<_, Option<f64>>(i)
+            .map(|v| {
+                serde_json::Number::from_f64(v)
+                    .map(Value::Number)
+                    .unwrap_or(Value::Null)
+            })
+            .unwrap_or(Value::Null),
+
+        Type::JSONB | Type::JSON => row
+            .get::<_, Option<serde_json::Value>>(i)
+            .unwrap_or(Value::Null),
+
+        Type::UUID => row
+            .get::<_, Option<Uuid>>(i)
+            .map(|u| Value::String(u.to_string()))
+            .unwrap_or(Value::Null),
+
+        Type::TIMESTAMP => row
+            .get::<_, Option<NaiveDateTime>>(i)
+            .map(|dt| Value::String(dt.to_string()))
+            .unwrap_or(Value::Null),
+
+        Type::TIMESTAMPTZ => row
+            .get::<_, Option<DateTime<Utc>>>(i)
+            .map(|dt| Value::String(dt.to_rfc3339()))
+            .unwrap_or(Value::Null),
+
+        Type::DATE => row
+            .get::<_, Option<NaiveDate>>(i)
+            .map(|d| Value::String(d.to_string()))
+            .unwrap_or(Value::Null),
+
+        Type::TIME => row
+            .get::<_, Option<NaiveTime>>(i)
+            .map(|t| Value::String(t.to_string()))
+            .unwrap_or(Value::Null),
+
+        // TEXT, VARCHAR, NAME, BPCHAR, UNKNOWN, NUMERIC, and anything else
+        // with a text-compatible representation.
+        _ => row
+            .try_get::<_, Option<String>>(i)
+            .ok()
+            .flatten()
+            .map(Value::String)
+            .unwrap_or(Value::Null),
+    }
+}
+
+fn row_to_json(row: &postgres::Row) -> Map<String, Value> {
+    row.columns()
+        .iter()
+        .enumerate()
+        .map(|(i, col)| (col.name().to_string(), cell_to_json(row, i)))
         .collect()
+}
+
+// ---------------------------------------------------------------------------
+// Query execution
+// ---------------------------------------------------------------------------
+
+fn exec_query(config: &ConnConfig, sql: &str) -> Vec<postgres::Row> {
+    let mut client = connect(config);
+    client
+        .query(sql, &[])
+        .unwrap_or_else(|e| exit_with_error(sanitize_pg_error(&e)))
 }
 
 // ---------------------------------------------------------------------------
@@ -281,7 +299,7 @@ fn csv_to_json(csv_text: &str) -> Vec<HashMap<String, String>> {
 
 #[derive(Serialize)]
 struct QueryResponse {
-    rows: Vec<HashMap<String, String>>,
+    rows: Vec<Map<String, Value>>,
     count: usize,
 }
 
@@ -289,8 +307,8 @@ pub fn run_query(config: &ConnConfig, sql: &str) {
     if let Some(table) = detect_write_target(sql) {
         assert_write_allowed(config, &table);
     }
-    let raw = exec_psql(config, sql);
-    let rows = csv_to_json(&raw);
+    let raw = exec_query(config, sql);
+    let rows: Vec<Map<String, Value>> = raw.iter().map(row_to_json).collect();
     let count = rows.len();
     let resp = QueryResponse { rows, count };
     println!("{}", serde_json::to_string(&resp).unwrap());
@@ -306,7 +324,6 @@ pub fn list_tables(config: &ConnConfig, schema: &str) {
 }
 
 pub fn describe_table(config: &ConnConfig, table: &str) {
-    // Support optional schema qualification
     let (schema, tbl) = if table.contains('.') {
         let parts: Vec<&str> = table.splitn(2, '.').collect();
         (parts[0], parts[1])
@@ -328,58 +345,6 @@ pub fn describe_table(config: &ConnConfig, table: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_csv_to_json_basic() {
-        let csv = "name,age\nAlice,30\nBob,25\n";
-        let rows = csv_to_json(csv);
-        assert_eq!(rows.len(), 2);
-        assert_eq!(rows[0]["name"], "Alice");
-        assert_eq!(rows[0]["age"], "30");
-        assert_eq!(rows[1]["name"], "Bob");
-    }
-
-    #[test]
-    fn test_csv_to_json_empty() {
-        let csv = "";
-        let rows = csv_to_json(csv);
-        assert!(rows.is_empty());
-    }
-
-    #[test]
-    fn test_sanitize_connection_refused() {
-        let raw = "psql: error: connection to server at \"localhost\" (::1), port 5454 failed: Connection refused\n\tIs the server running on that host and accepting TCP/IP connections?\nconnection to server at \"localhost\" (127.0.0.1), port 5454 failed: Connection refused\n\tIs the server running on that host and accepting TCP/IP connections?";
-        assert_eq!(sanitize_psql_error(raw), "connection refused");
-    }
-
-    #[test]
-    fn test_sanitize_auth_failed() {
-        let raw = "psql: error: connection to server at \"db.example.com\" (1.2.3.4), port 5432 failed: FATAL:  password authentication failed for user \"alice\"";
-        assert_eq!(sanitize_psql_error(raw), "authentication failed");
-    }
-
-    #[test]
-    fn test_sanitize_timeout() {
-        let raw = "psql: error: connection to server timed out";
-        assert_eq!(sanitize_psql_error(raw), "connection timed out");
-    }
-
-    #[test]
-    fn test_sanitize_database_not_exist() {
-        let raw = "psql: error: FATAL:  database \"mydb\" does not exist";
-        assert_eq!(sanitize_psql_error(raw), "database does not exist");
-    }
-
-    #[test]
-    fn test_strip_conn_details() {
-        let s = "connection to server at \"localhost\" (127.0.0.1), port 5454 failed";
-        let result = regex_strip_conn_details(s);
-        assert!(!result.contains("localhost"));
-        assert!(!result.contains("127.0.0.1"));
-        assert!(!result.contains("5454"));
-    }
-
-    // --- write-guard tests ---
 
     #[test]
     fn test_detect_write_insert() {
@@ -441,9 +406,9 @@ mod tests {
             database: "d".into(),
             user: "u".into(),
             password: None,
+            tls: None,
             writable_tables: Some(vec!["orders".into()]),
         };
-        // Should not panic/exit
         assert_write_allowed(&config, "orders");
         assert_write_allowed(&config, "public.orders");
     }

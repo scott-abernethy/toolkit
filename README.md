@@ -15,7 +15,6 @@ Tools are designed to be invoked by AI agents (e.g. from [opencode](https://open
 - [asdf](https://asdf-vm.com) with the rust plugin: `asdf plugin add rust && asdf install`
 - [just](https://github.com/casey/just): `brew install just`
 - `~/.cargo/bin` on your `PATH`: add `export PATH="$HOME/.cargo/bin:$PATH"` to your `~/.zshrc`
-- **For `tkpsql`**: `brew install libpq && brew link --force libpq`
 
 ## Install
 
@@ -73,6 +72,7 @@ port     = 5432
 database = "mydb"
 user     = "readonly"
 password = "secret"
+tls      = true   # enable TLS (default: false)
 
 # Connection with selective write access — only the listed tables can be mutated.
 # The database user should also be granted the corresponding privileges.
