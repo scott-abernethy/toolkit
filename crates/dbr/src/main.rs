@@ -35,6 +35,21 @@ enum Commands {
         #[command(subcommand)]
         cmd: WarehousesCmd,
     },
+    /// Explore Unity Catalog metadata
+    Catalogs {
+        #[command(subcommand)]
+        cmd: CatalogsCmd,
+    },
+    /// Explore schemas in a catalog
+    Schemas {
+        #[command(subcommand)]
+        cmd: SchemasCmd,
+    },
+    /// Explore tables in a schema
+    Tables {
+        #[command(subcommand)]
+        cmd: TablesCmd,
+    },
 }
 
 #[derive(Subcommand)]
@@ -101,6 +116,66 @@ enum WarehousesCmd {
     },
 }
 
+#[derive(Subcommand)]
+enum CatalogsCmd {
+    /// List catalogs accessible to current user
+    List {
+        /// Maximum number of catalogs to return
+        #[arg(long, default_value = "100")]
+        limit: u32,
+    },
+    /// Get details about a specific catalog
+    Get {
+        #[arg(long)]
+        catalog: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum SchemasCmd {
+    /// List schemas in a catalog
+    List {
+        #[arg(long)]
+        catalog: String,
+        /// Maximum number of schemas to return
+        #[arg(long, default_value = "100")]
+        limit: u32,
+    },
+    /// Get details about a specific schema
+    Get {
+        #[arg(long)]
+        catalog: String,
+        #[arg(long)]
+        schema: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum TablesCmd {
+    /// List tables in a schema
+    List {
+        #[arg(long)]
+        catalog: String,
+        #[arg(long)]
+        schema: String,
+        /// Maximum number of tables to return
+        #[arg(long, default_value = "100")]
+        limit: u32,
+        /// Omit column definitions (lighter response)
+        #[arg(long)]
+        omit_columns: bool,
+    },
+    /// Get table schema and metadata
+    Get {
+        #[arg(long)]
+        catalog: String,
+        #[arg(long)]
+        schema: String,
+        #[arg(long)]
+        table: String,
+    },
+}
+
 fn main() {
     let cli = Cli::parse();
     let config = dbr::load_config(cli.conn.as_deref());
@@ -123,6 +198,27 @@ fn main() {
         Commands::Warehouses { cmd } => match cmd {
             WarehousesCmd::List => dbr::warehouses_list(&config),
             WarehousesCmd::Get { warehouse_id } => dbr::warehouses_get(&config, &warehouse_id),
+        },
+        Commands::Catalogs { cmd } => match cmd {
+            CatalogsCmd::List { limit } => dbr::catalogs_list(&config, limit),
+            CatalogsCmd::Get { catalog } => dbr::catalogs_get(&config, &catalog),
+        },
+        Commands::Schemas { cmd } => match cmd {
+            SchemasCmd::List { catalog, limit } => dbr::schemas_list(&config, &catalog, limit),
+            SchemasCmd::Get { catalog, schema } => dbr::schemas_get(&config, &catalog, &schema),
+        },
+        Commands::Tables { cmd } => match cmd {
+            TablesCmd::List {
+                catalog,
+                schema,
+                limit,
+                omit_columns,
+            } => dbr::tables_list(&config, &catalog, &schema, limit, omit_columns),
+            TablesCmd::Get {
+                catalog,
+                schema,
+                table,
+            } => dbr::tables_get(&config, &catalog, &schema, &table),
         },
     }
 }

@@ -386,6 +386,179 @@ fn compact_warehouse(w: &Value) -> Value {
 }
 
 // ---------------------------------------------------------------------------
+// Catalogs
+// ---------------------------------------------------------------------------
+
+pub fn catalogs_list(config: &ConnConfig, limit: u32) {
+    let limit_str = limit.to_string();
+    let raw = run_databricks(config, &["catalogs", "list", "--max-results", &limit_str]);
+
+    // API returns a top-level array, not wrapped in an object
+    let catalogs = raw
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .map(|c| {
+                    json!({
+                        "name": c["name"],
+                        "owner": c.get("owner"),
+                        "created_at": c.get("created_at"),
+                    })
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    let count = catalogs.len();
+    print_json(&json!({"catalogs": catalogs, "count": count}));
+}
+
+pub fn catalogs_get(config: &ConnConfig, catalog: &str) {
+    let raw = run_databricks(config, &["catalogs", "get", catalog]);
+
+    print_json(&json!({
+        "name": raw["name"],
+        "owner": raw.get("owner"),
+        "created_at": raw.get("created_at"),
+        "comment": raw.get("comment"),
+    }));
+}
+
+// ---------------------------------------------------------------------------
+// Schemas
+// ---------------------------------------------------------------------------
+
+pub fn schemas_list(config: &ConnConfig, catalog: &str, limit: u32) {
+    let limit_str = limit.to_string();
+    let raw = run_databricks(
+        config,
+        &["schemas", "list", catalog, "--max-results", &limit_str],
+    );
+
+    // API returns a top-level array, not wrapped in an object
+    let schemas = raw
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .map(|s| {
+                    json!({
+                        "name": s["name"],
+                        "catalog": s.get("catalog_name"),
+                        "owner": s.get("owner"),
+                        "created_at": s.get("created_at"),
+                    })
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    let count = schemas.len();
+    print_json(&json!({"schemas": schemas, "count": count}));
+}
+
+pub fn schemas_get(config: &ConnConfig, catalog: &str, schema: &str) {
+    let full_name = format!("{}.{}", catalog, schema);
+    let raw = run_databricks(config, &["schemas", "get", &full_name]);
+
+    print_json(&json!({
+        "name": raw["name"],
+        "catalog": raw.get("catalog_name"),
+        "owner": raw.get("owner"),
+        "created_at": raw.get("created_at"),
+        "comment": raw.get("comment"),
+    }));
+}
+
+// ---------------------------------------------------------------------------
+// Tables
+// ---------------------------------------------------------------------------
+
+pub fn tables_list(
+    config: &ConnConfig,
+    catalog: &str,
+    schema: &str,
+    limit: u32,
+    omit_columns: bool,
+) {
+    let limit_str = limit.to_string();
+    let mut args = vec!["tables", "list", catalog, schema, "--max-results", &limit_str];
+    if omit_columns {
+        args.push("--omit-columns");
+    }
+
+    let raw = run_databricks(config, &args);
+
+    // API returns a top-level array, not wrapped in an object
+    let tables = raw
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .map(|t| {
+                    let mut table_obj = json!({
+                        "name": t["name"],
+                        "type": t.get("table_type"),
+                    });
+
+                    if !omit_columns {
+                        if let Some(cols) = t.get("columns").and_then(Value::as_array) {
+                            table_obj["columns"] = json!(
+                                cols.iter()
+                                    .map(|c| {
+                                        json!({
+                                            "name": c["name"],
+                                            "type": c["type_text"],
+                                            "nullable": c.get("nullable").unwrap_or(&json!(true)),
+                                            "comment": c.get("comment"),
+                                        })
+                                    })
+                                    .collect::<Vec<_>>()
+                            );
+                        }
+                    }
+
+                    table_obj
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    let count = tables.len();
+    print_json(&json!({"tables": tables, "count": count}));
+}
+
+pub fn tables_get(config: &ConnConfig, catalog: &str, schema: &str, table: &str) {
+    let full_name = format!("{}.{}.{}", catalog, schema, table);
+    let raw = run_databricks(config, &["tables", "get", &full_name]);
+
+    let columns = raw
+        .get("columns")
+        .and_then(Value::as_array)
+        .map(|cols| {
+            cols.iter()
+                .map(|c| {
+                    json!({
+                        "name": c["name"],
+                        "type": c["type_text"],
+                        "nullable": c.get("nullable").unwrap_or(&json!(true)),
+                        "comment": c.get("comment"),
+                    })
+                })
+                .collect::<Vec<_>>()
+        });
+
+    print_json(&json!({
+        "name": raw["name"],
+        "catalog": raw.get("catalog_name"),
+        "schema": raw.get("schema_name"),
+        "type": raw.get("table_type"),
+        "owner": raw.get("owner"),
+        "created_at": raw.get("created_at"),
+        "comment": raw.get("comment"),
+        "columns": columns,
+    }));
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 

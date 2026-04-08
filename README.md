@@ -9,6 +9,7 @@ Tools are designed to be invoked by AI agents (e.g. from [opencode](https://open
 | Binary    | Crate          | Description                                      |
 |-----------|----------------|--------------------------------------------------|
 | `tkpsql`  | `crates/psql`  | PostgreSQL query tool for agents — hides credentials, enforces per-connection write allowlists |
+| `tkdbr`   | `crates/dbr`   | Databricks CLI wrapper for exploring Unity Catalog metadata and managing jobs/clusters (read-only) |
 
 ## Prerequisites
 
@@ -52,13 +53,64 @@ Output is compact JSON:
 {"rows":[{"id":"1","name":"Alice"},{"id":"2","name":"Bob"}],"count":2}
 ```
 
+### tkdbr
+
+```sh
+# List all accessible catalogs
+tkdbr --conn prod catalogs list [--limit 100]
+
+# Get catalog details
+tkdbr --conn prod catalogs get --catalog my_catalog
+
+# List schemas in a catalog
+tkdbr --conn prod schemas list --catalog my_catalog [--limit 100]
+
+# Get schema details
+tkdbr --conn prod schemas get --catalog my_catalog --schema my_schema
+
+# List tables in a schema
+tkdbr --conn prod tables list --catalog my_catalog --schema my_schema [--limit 100]
+
+# List tables without column info (lighter response)
+tkdbr --conn prod tables list --catalog my_catalog --schema my_schema --omit-columns
+
+# Get full table schema and metadata
+tkdbr --conn prod tables get --catalog my_catalog --schema my_schema --table my_table
+
+# List jobs
+tkdbr --conn prod jobs list [--limit 25]
+
+# Get job details
+tkdbr --conn prod jobs get --job-id 123
+
+# Trigger a job run (requires allow_job_runs = true in config)
+tkdbr --conn prod jobs trigger --job-id 123
+
+# List and inspect job runs
+tkdbr --conn prod runs list --job-id 123 [--limit 10]
+tkdbr --conn prod runs get --run-id 456
+tkdbr --conn prod runs output --run-id 456
+
+# List and inspect clusters
+tkdbr --conn prod clusters list
+tkdbr --conn prod clusters get --cluster-id abc-123
+
+# List and inspect SQL warehouses
+tkdbr --conn prod warehouses list
+tkdbr --conn prod warehouses get --warehouse-id abc-123
+```
+
+Output is compact, agent-friendly JSON optimized for token efficiency. All read operations are safe; only `jobs trigger` requires explicit permission via `allow_job_runs = true` in config.
+
 ## Configuration
 
-All tools share a single config file at `~/.config/toolkit/config.toml`. Each tool has its own `[section]`, and `tkpsql` supports multiple named connections within its section:
+All tools share a single config file at `~/.config/toolkit/config.toml`. Each tool has its own `[section]`.
+
+### tkpsql
+
+`tkpsql` supports multiple named connections:
 
 ```toml
-# ~/.config/toolkit/config.toml
-
 [psql.local]
 host     = "localhost"
 port     = 5432
@@ -83,6 +135,25 @@ database        = "mydb"
 user            = "migrationuser"
 password        = "secret"
 writable_tables = ["migration_fc_aggregate_ids", "migration_fc_party_ids"]
+```
+
+### tkdbr
+
+`tkdbr` supports multiple named Databricks connections:
+
+```toml
+[dbr.dev]
+profile = "databricks-dev"           # profile name from ~/.databrickscfg
+allow_job_runs = false               # permit jobs trigger (default: false)
+
+[dbr.prod]
+profile = "databricks-prod"
+allow_job_runs = false
+
+# Optional: override workspace host (useful for staging/testing)
+[dbr.staging]
+profile = "databricks-prod"
+host = "staging-workspace.databricks.com"
 ```
 
 If only one connection is configured, `--conn` can be omitted. Override the config file path with `TOOLKIT_CONFIG=/path/to/other.toml`.
