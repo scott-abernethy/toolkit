@@ -78,10 +78,96 @@ fn exec_psql(config: &ConnConfig, sql: &str) -> String {
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        exit_with_error(format!("psql error: {}", stderr.trim()));
+        exit_with_error(sanitize_psql_error(&stderr));
     }
 
     String::from_utf8_lossy(&output.stdout).into_owned()
+}
+
+/// Classify a raw psql stderr message into a concise, credential-safe error string.
+fn sanitize_psql_error(stderr: &str) -> String {
+    let lower = stderr.to_lowercase();
+    // More specific patterns first to avoid being swallowed by broad connection checks.
+    if lower.contains("password authentication failed") || lower.contains("authentication failed") {
+        "authentication failed".to_string()
+    } else if lower.contains("timeout") || lower.contains("timed out") {
+        "connection timed out".to_string()
+    } else if lower.contains("connection refused") || lower.contains("connection to server") {
+        "connection refused".to_string()
+    } else if lower.contains("database") && lower.contains("does not exist") {
+        "database does not exist".to_string()
+    } else if lower.contains("role") && lower.contains("does not exist") {
+        "role does not exist".to_string()
+    } else if lower.contains("permission denied") || lower.contains("insufficient privilege") {
+        "permission denied".to_string()
+    } else if lower.contains("ssl") {
+        "ssl error".to_string()
+    } else {
+        // Emit only the first line to avoid multi-line noise; strip any
+        // host/port fragments that might appear in unknown messages.
+        let first_line = stderr.lines().next().unwrap_or("unknown error");
+        // Remove substrings matching common connection detail patterns.
+        let cleaned = regex_strip_conn_details(first_line);
+        format!("psql error: {}", cleaned.trim())
+    }
+}
+
+/// Best-effort removal of host/port fragments from an arbitrary psql error line.
+/// Strips patterns like `at "hostname"`, `(address)`, and `, port NNNN`.
+fn regex_strip_conn_details(s: &str) -> String {
+    // We avoid pulling in the `regex` crate — use a simple state-machine strip instead.
+    // Patterns to remove: `at "..."`, `(...)`, `, port \d+`
+    let mut out = String::with_capacity(s.len());
+    let bytes = s.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        // Skip `, port <digits>`
+        if s[i..].starts_with(", port ") {
+            i += 7;
+            while i < bytes.len() && bytes[i].is_ascii_digit() {
+                i += 1;
+            }
+            continue;
+        }
+        // Skip `at "..."`
+        if s[i..].starts_with("at \"") {
+            i += 4;
+            while i < bytes.len() && bytes[i] != b'"' {
+                i += 1;
+            }
+            if i < bytes.len() {
+                i += 1; // closing quote
+            }
+            continue;
+        }
+        // Skip `(...)` — IP address groups
+        if bytes[i] == b'(' {
+            while i < bytes.len() && bytes[i] != b')' {
+                i += 1;
+            }
+            if i < bytes.len() {
+                i += 1;
+            }
+            continue;
+        }
+        out.push(bytes[i] as char);
+        i += 1;
+    }
+    // Collapse multiple spaces
+    let mut result = String::with_capacity(out.len());
+    let mut prev_space = false;
+    for ch in out.chars() {
+        if ch == ' ' {
+            if !prev_space {
+                result.push(ch);
+            }
+            prev_space = true;
+        } else {
+            result.push(ch);
+            prev_space = false;
+        }
+    }
+    result
 }
 
 // ---------------------------------------------------------------------------
@@ -179,5 +265,38 @@ mod tests {
         let csv = "";
         let rows = csv_to_json(csv);
         assert!(rows.is_empty());
+    }
+
+    #[test]
+    fn test_sanitize_connection_refused() {
+        let raw = "psql: error: connection to server at \"localhost\" (::1), port 5454 failed: Connection refused\n\tIs the server running on that host and accepting TCP/IP connections?\nconnection to server at \"localhost\" (127.0.0.1), port 5454 failed: Connection refused\n\tIs the server running on that host and accepting TCP/IP connections?";
+        assert_eq!(sanitize_psql_error(raw), "connection refused");
+    }
+
+    #[test]
+    fn test_sanitize_auth_failed() {
+        let raw = "psql: error: connection to server at \"db.example.com\" (1.2.3.4), port 5432 failed: FATAL:  password authentication failed for user \"alice\"";
+        assert_eq!(sanitize_psql_error(raw), "authentication failed");
+    }
+
+    #[test]
+    fn test_sanitize_timeout() {
+        let raw = "psql: error: connection to server timed out";
+        assert_eq!(sanitize_psql_error(raw), "connection timed out");
+    }
+
+    #[test]
+    fn test_sanitize_database_not_exist() {
+        let raw = "psql: error: FATAL:  database \"mydb\" does not exist";
+        assert_eq!(sanitize_psql_error(raw), "database does not exist");
+    }
+
+    #[test]
+    fn test_strip_conn_details() {
+        let s = "connection to server at \"localhost\" (127.0.0.1), port 5454 failed";
+        let result = regex_strip_conn_details(s);
+        assert!(!result.contains("localhost"));
+        assert!(!result.contains("127.0.0.1"));
+        assert!(!result.contains("5454"));
     }
 }
