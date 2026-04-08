@@ -8,7 +8,7 @@ Tools are designed to be invoked by AI agents (e.g. from [opencode](https://open
 
 | Binary    | Crate          | Description                                      |
 |-----------|----------------|--------------------------------------------------|
-| `tkpsql`  | `crates/psql`  | Read-only PostgreSQL query tool — hides credentials, enforces read-only transactions |
+| `tkpsql`  | `crates/psql`  | PostgreSQL query tool for agents — hides credentials, enforces per-connection write allowlists |
 
 ## Prerequisites
 
@@ -45,7 +45,7 @@ tkpsql --conn prod describe --table users
 tkpsql --conn prod describe --table myschema.users   # schema-qualified
 ```
 
-All queries are automatically wrapped in `BEGIN TRANSACTION READ ONLY` — write statements will be rejected by PostgreSQL regardless of the database user's permissions.
+By default all connections are strictly read-only — write statements are rejected at both the tool level and the PostgreSQL session level. To permit writes on specific tables, add a `writable_tables` list to the connection config (see below). Writes to any table not in that list are rejected by the tool before the query reaches the database.
 
 Output is compact JSON:
 
@@ -73,6 +73,16 @@ port     = 5432
 database = "mydb"
 user     = "readonly"
 password = "secret"
+
+# Connection with selective write access — only the listed tables can be mutated.
+# The database user should also be granted the corresponding privileges.
+[psql.migration]
+host            = "localhost"
+port            = 5432
+database        = "mydb"
+user            = "migrationuser"
+password        = "secret"
+writable_tables = ["migration_fc_aggregate_ids", "migration_fc_party_ids"]
 ```
 
 If only one connection is configured, `--conn` can be omitted. Override the config file path with `TOOLKIT_CONFIG=/path/to/other.toml`.

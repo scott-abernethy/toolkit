@@ -14,6 +14,17 @@ pub struct ConnConfig {
     pub database: String,
     pub user: String,
     pub password: Option<String>,
+    /// Tables the agent is permitted to write to (INSERT/UPDATE/DELETE/TRUNCATE).
+    /// If absent or empty, the connection is treated as strictly read-only.
+    pub writable_tables: Option<Vec<String>>,
+}
+
+impl ConnConfig {
+    fn is_readonly(&self) -> bool {
+        self.writable_tables
+            .as_ref()
+            .map_or(true, |t| t.is_empty())
+    }
 }
 
 /// Load a named connection from the [psql] section of the shared config.
@@ -53,28 +64,98 @@ fn sorted_keys(map: &HashMap<String, ConnConfig>) -> Vec<String> {
 }
 
 // ---------------------------------------------------------------------------
+// Write-permission guard
+// ---------------------------------------------------------------------------
+
+/// Strips any schema prefix from a table name: `public.foo` → `foo`.
+fn strip_schema(name: &str) -> &str {
+    name.rfind('.').map_or(name, |i| &name[i + 1..])
+}
+
+/// If `sql` is a write statement, returns the bare target table name.
+/// Returns `None` for read-only statements.
+fn detect_write_target(sql: &str) -> Option<String> {
+    let upper = sql.to_uppercase();
+
+    // Patterns: (keyword, whether to skip an extra word after keyword)
+    // INSERT INTO <table>
+    // UPDATE <table>
+    // DELETE FROM <table>
+    // TRUNCATE [TABLE] <table>
+    let candidates: &[(&str, bool)] = &[
+        ("INSERT INTO ", false),
+        ("UPDATE ", false),
+        ("DELETE FROM ", false),
+        ("TRUNCATE TABLE ", false),
+        ("TRUNCATE ", false),
+    ];
+
+    for (keyword, _) in candidates {
+        if let Some(pos) = upper.find(keyword) {
+            let after = sql[pos + keyword.len()..].trim_start();
+            let table: String = after
+                .chars()
+                .take_while(|c| !c.is_whitespace() && *c != ';' && *c != '(')
+                .collect();
+            if !table.is_empty() {
+                return Some(strip_schema(&table).to_lowercase());
+            }
+        }
+    }
+
+    None
+}
+
+/// Checks whether a write to `table` is permitted by the config.
+/// Exits with an error if not.
+fn assert_write_allowed(config: &ConnConfig, table: &str) {
+    let allowed = match &config.writable_tables {
+        Some(list) if !list.is_empty() => list,
+        _ => exit_with_error(format!("write to '{}' denied", table)),
+    };
+
+    let normalised = strip_schema(table).to_lowercase();
+    if !allowed
+        .iter()
+        .any(|t| strip_schema(t).to_lowercase() == normalised)
+    {
+        exit_with_error(format!("write to '{}' denied", table));
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Query execution via psql
 // ---------------------------------------------------------------------------
 
 /// Runs psql and returns the raw stdout as a string.
 fn exec_psql(config: &ConnConfig, sql: &str) -> String {
     let mut cmd = Command::new("psql");
-    cmd.arg("-h").arg(&config.host)
-        .arg("-p").arg(config.port.to_string())
-        .arg("-U").arg(&config.user)
-        .arg("-d").arg(&config.database)
+    cmd.arg("-h")
+        .arg(&config.host)
+        .arg("-p")
+        .arg(config.port.to_string())
+        .arg("-U")
+        .arg(&config.user)
+        .arg("-d")
+        .arg(&config.database)
         .arg("--no-psqlrc")
         .arg("--csv")
-        .arg("-c").arg(sql)
-        .env("PGOPTIONS", "-c default_transaction_read_only=on");
+        .arg("-c")
+        .arg(sql);
+
+    // Keep the DB-level read-only guard when no writable tables are configured —
+    // two independent layers of enforcement for pure read-only connections.
+    if config.is_readonly() {
+        cmd.env("PGOPTIONS", "-c default_transaction_read_only=on");
+    }
 
     if let Some(pw) = &config.password {
         cmd.env("PGPASSWORD", pw);
     }
 
-    let output = cmd.output().unwrap_or_else(|e| {
-        exit_with_error(format!("Failed to execute psql: {}", e))
-    });
+    let output = cmd
+        .output()
+        .unwrap_or_else(|e| exit_with_error(format!("Failed to execute psql: {}", e)));
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -106,7 +187,6 @@ fn sanitize_psql_error(stderr: &str) -> String {
         // Emit only the first line to avoid multi-line noise; strip any
         // host/port fragments that might appear in unknown messages.
         let first_line = stderr.lines().next().unwrap_or("unknown error");
-        // Remove substrings matching common connection detail patterns.
         let cleaned = regex_strip_conn_details(first_line);
         format!("psql error: {}", cleaned.trim())
     }
@@ -115,8 +195,6 @@ fn sanitize_psql_error(stderr: &str) -> String {
 /// Best-effort removal of host/port fragments from an arbitrary psql error line.
 /// Strips patterns like `at "hostname"`, `(address)`, and `, port NNNN`.
 fn regex_strip_conn_details(s: &str) -> String {
-    // We avoid pulling in the `regex` crate — use a simple state-machine strip instead.
-    // Patterns to remove: `at "..."`, `(...)`, `, port \d+`
     let mut out = String::with_capacity(s.len());
     let bytes = s.as_bytes();
     let mut i = 0;
@@ -191,9 +269,7 @@ fn csv_to_json(csv_text: &str) -> Vec<HashMap<String, String>> {
             headers
                 .iter()
                 .enumerate()
-                .map(|(i, h)| {
-                    (h.clone(), record.get(i).unwrap_or("").to_string())
-                })
+                .map(|(i, h)| (h.clone(), record.get(i).unwrap_or("").to_string()))
                 .collect()
         })
         .collect()
@@ -210,6 +286,9 @@ struct QueryResponse {
 }
 
 pub fn run_query(config: &ConnConfig, sql: &str) {
+    if let Some(table) = detect_write_target(sql) {
+        assert_write_allowed(config, &table);
+    }
     let raw = exec_psql(config, sql);
     let rows = csv_to_json(&raw);
     let count = rows.len();
@@ -298,5 +377,81 @@ mod tests {
         assert!(!result.contains("localhost"));
         assert!(!result.contains("127.0.0.1"));
         assert!(!result.contains("5454"));
+    }
+
+    // --- write-guard tests ---
+
+    #[test]
+    fn test_detect_write_insert() {
+        assert_eq!(
+            detect_write_target("INSERT INTO public.orders VALUES (1)"),
+            Some("orders".to_string())
+        );
+    }
+
+    #[test]
+    fn test_detect_write_insert_unqualified() {
+        assert_eq!(
+            detect_write_target("insert into orders (id) values (1)"),
+            Some("orders".to_string())
+        );
+    }
+
+    #[test]
+    fn test_detect_write_update() {
+        assert_eq!(
+            detect_write_target("UPDATE public.orders SET status = 'done' WHERE id = 1"),
+            Some("orders".to_string())
+        );
+    }
+
+    #[test]
+    fn test_detect_write_delete() {
+        assert_eq!(
+            detect_write_target("DELETE FROM orders WHERE id = 1"),
+            Some("orders".to_string())
+        );
+    }
+
+    #[test]
+    fn test_detect_write_truncate() {
+        assert_eq!(
+            detect_write_target("TRUNCATE TABLE orders"),
+            Some("orders".to_string())
+        );
+        assert_eq!(
+            detect_write_target("TRUNCATE orders"),
+            Some("orders".to_string())
+        );
+    }
+
+    #[test]
+    fn test_detect_write_select_is_none() {
+        assert_eq!(
+            detect_write_target("SELECT * FROM orders WHERE id = 1"),
+            None
+        );
+    }
+
+    #[test]
+    fn test_assert_write_allowed_permits() {
+        let config = ConnConfig {
+            host: "h".into(),
+            port: 5432,
+            database: "d".into(),
+            user: "u".into(),
+            password: None,
+            writable_tables: Some(vec!["orders".into()]),
+        };
+        // Should not panic/exit
+        assert_write_allowed(&config, "orders");
+        assert_write_allowed(&config, "public.orders");
+    }
+
+    #[test]
+    fn test_strip_schema() {
+        assert_eq!(strip_schema("public.orders"), "orders");
+        assert_eq!(strip_schema("orders"), "orders");
+        assert_eq!(strip_schema("myschema.my_table"), "my_table");
     }
 }
