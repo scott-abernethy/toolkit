@@ -1,0 +1,128 @@
+mod dbr;
+
+use clap::{Parser, Subcommand};
+
+#[derive(Parser)]
+#[command(name = "tkdbr", about = "Databricks CLI wrapper for AI agents")]
+struct Cli {
+    /// Named connection from config (e.g. dev, prod). Required if multiple connections are configured.
+    #[arg(long, global = true)]
+    conn: Option<String>,
+
+    #[command(subcommand)]
+    command: Commands,
+}
+
+#[derive(Subcommand)]
+enum Commands {
+    /// List and inspect jobs
+    Jobs {
+        #[command(subcommand)]
+        cmd: JobsCmd,
+    },
+    /// List and inspect job runs
+    Runs {
+        #[command(subcommand)]
+        cmd: RunsCmd,
+    },
+    /// List and inspect clusters
+    Clusters {
+        #[command(subcommand)]
+        cmd: ClustersCmd,
+    },
+    /// List and inspect SQL warehouses
+    Warehouses {
+        #[command(subcommand)]
+        cmd: WarehousesCmd,
+    },
+}
+
+#[derive(Subcommand)]
+enum JobsCmd {
+    /// List jobs (compact: id, name)
+    List {
+        /// Maximum number of jobs to return
+        #[arg(long, default_value = "25")]
+        limit: u32,
+    },
+    /// Get job details (compact: id, name, tasks, schedule)
+    Get {
+        #[arg(long)]
+        job_id: i64,
+    },
+    /// Trigger a job run (requires allow_job_runs = true in config)
+    Trigger {
+        #[arg(long)]
+        job_id: i64,
+    },
+}
+
+#[derive(Subcommand)]
+enum RunsCmd {
+    /// List recent runs for a job
+    List {
+        #[arg(long)]
+        job_id: i64,
+        /// Maximum number of runs to return
+        #[arg(long, default_value = "10")]
+        limit: u32,
+    },
+    /// Get run status (compact: run_id, state, result, timing)
+    Get {
+        #[arg(long)]
+        run_id: i64,
+    },
+    /// Get run output (notebook result or error)
+    Output {
+        #[arg(long)]
+        run_id: i64,
+    },
+}
+
+#[derive(Subcommand)]
+enum ClustersCmd {
+    /// List clusters (compact: id, name, state)
+    List,
+    /// Get cluster details
+    Get {
+        #[arg(long)]
+        cluster_id: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum WarehousesCmd {
+    /// List SQL warehouses (compact: id, name, state)
+    List,
+    /// Get warehouse details
+    Get {
+        #[arg(long)]
+        warehouse_id: String,
+    },
+}
+
+fn main() {
+    let cli = Cli::parse();
+    let config = dbr::load_config(cli.conn.as_deref());
+
+    match cli.command {
+        Commands::Jobs { cmd } => match cmd {
+            JobsCmd::List { limit } => dbr::jobs_list(&config, limit),
+            JobsCmd::Get { job_id } => dbr::jobs_get(&config, job_id),
+            JobsCmd::Trigger { job_id } => dbr::jobs_trigger(&config, job_id),
+        },
+        Commands::Runs { cmd } => match cmd {
+            RunsCmd::List { job_id, limit } => dbr::runs_list(&config, job_id, limit),
+            RunsCmd::Get { run_id } => dbr::runs_get(&config, run_id),
+            RunsCmd::Output { run_id } => dbr::runs_output(&config, run_id),
+        },
+        Commands::Clusters { cmd } => match cmd {
+            ClustersCmd::List => dbr::clusters_list(&config),
+            ClustersCmd::Get { cluster_id } => dbr::clusters_get(&config, &cluster_id),
+        },
+        Commands::Warehouses { cmd } => match cmd {
+            WarehousesCmd::List => dbr::warehouses_list(&config),
+            WarehousesCmd::Get { warehouse_id } => dbr::warehouses_get(&config, &warehouse_id),
+        },
+    }
+}

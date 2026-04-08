@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/common",
+    "crates/dbr",
     "crates/psql",
 ]
 resolver = "2"
