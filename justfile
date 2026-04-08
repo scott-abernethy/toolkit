@@ -25,3 +25,14 @@ lint:
 # Format
 fmt:
     cargo fmt --all
+
+# Audit dependencies for security vulnerabilities
+audit:
+    @echo "📦 Dependency audit:"
+    @echo ""
+    @echo "Direct dependencies:"
+    cargo tree --depth 1
+    @echo ""
+    @echo "For more advanced checks:"
+    @echo "  - cargo install cargo-outdated && cargo outdated"
+    @echo "  - cargo install cargo-deny && cargo deny check"
