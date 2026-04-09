@@ -114,6 +114,43 @@ fn run_databricks(config: &ConnConfig, args: &[&str]) -> Value {
         .unwrap_or_else(|e| exit_with_error(format!("Failed to parse CLI output: {}", e)))
 }
 
+/// Run a databricks command that doesn't produce JSON output (e.g. bundle commands).
+/// Returns true if successful, exits on failure.
+fn run_databricks_no_json(config: &ConnConfig, args: &[&str]) -> bool {
+    let mut cmd = Command::new("databricks");
+
+    // Global flags before subcommand
+    if let Some(profile) = &config.profile {
+        cmd.arg("--profile").arg(profile);
+    }
+
+    // Subcommand and its args
+    cmd.args(args);
+
+    // Host override via env
+    if let Some(host) = &config.host {
+        cmd.env("DATABRICKS_HOST", host);
+    }
+
+    let output = cmd
+        .output()
+        .unwrap_or_else(|e| exit_with_error(format!("Failed to run databricks CLI: {}", e)));
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        // Prefer stderr for error message; fall back to stdout
+        let raw_msg = if !stderr.trim().is_empty() {
+            stderr.trim().to_string()
+        } else {
+            stdout.trim().to_string()
+        };
+        exit_with_error(sanitize_cli_error(&raw_msg));
+    }
+
+    true
+}
+
 /// Run `databricks api post <path>` with a JSON body and return parsed JSON output.
 fn run_databricks_api_post(config: &ConnConfig, path: &str, body: &Value) -> Value {
     let body_str = serde_json::to_string(body).unwrap();
@@ -933,18 +970,18 @@ fn print_query_result(raw: &Value) {
 
 pub fn bundle_validate(config: &ConnConfig) {
     let target = config.get_bundle_target();
-    let _raw = run_databricks(config, &["bundle", "validate", "-t", &target]);
+    run_databricks_no_json(config, &["bundle", "validate", "-t", &target]);
     print_json(&json!({"ok": true}));
 }
 
 pub fn bundle_deploy(config: &ConnConfig) {
     let target = config.get_bundle_target();
-    let _raw = run_databricks(config, &["bundle", "deploy", "-t", &target]);
+    run_databricks_no_json(config, &["bundle", "deploy", "-t", &target]);
     print_json(&json!({"ok": true}));
 }
 
 pub fn bundle_run(config: &ConnConfig, name: &str) {
     let target = config.get_bundle_target();
-    let _raw = run_databricks(config, &["bundle", "run", name, "-t", &target]);
+    run_databricks_no_json(config, &["bundle", "run", name, "-t", &target]);
     print_json(&json!({"ok": true}));
 }
