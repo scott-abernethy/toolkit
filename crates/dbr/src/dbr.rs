@@ -115,8 +115,8 @@ fn run_databricks(config: &ConnConfig, args: &[&str]) -> Value {
 }
 
 /// Run a databricks command that doesn't produce JSON output (e.g. bundle commands).
-/// Returns true if successful, exits on failure.
-fn run_databricks_no_json(config: &ConnConfig, args: &[&str]) -> bool {
+/// Returns (stdout, stderr) if successful, exits on failure.
+fn run_databricks_no_json(config: &ConnConfig, args: &[&str]) -> (String, String) {
     let mut cmd = Command::new("databricks");
 
     // Global flags before subcommand
@@ -148,7 +148,10 @@ fn run_databricks_no_json(config: &ConnConfig, args: &[&str]) -> bool {
         exit_with_error(sanitize_cli_error(&raw_msg));
     }
 
-    true
+    (
+        String::from_utf8_lossy(&output.stdout).to_string(),
+        String::from_utf8_lossy(&output.stderr).to_string(),
+    )
 }
 
 /// Run `databricks api post <path>` with a JSON body and return parsed JSON output.
@@ -970,18 +973,32 @@ fn print_query_result(raw: &Value) {
 
 pub fn bundle_validate(config: &ConnConfig) {
     let target = config.get_bundle_target();
-    run_databricks_no_json(config, &["bundle", "validate", "-t", &target]);
+    let _ = run_databricks_no_json(config, &["bundle", "validate", "-t", &target]);
     print_json(&json!({"ok": true}));
 }
 
 pub fn bundle_deploy(config: &ConnConfig) {
     let target = config.get_bundle_target();
-    run_databricks_no_json(config, &["bundle", "deploy", "-t", &target]);
+    let _ = run_databricks_no_json(config, &["bundle", "deploy", "-t", &target]);
     print_json(&json!({"ok": true}));
 }
 
 pub fn bundle_run(config: &ConnConfig, name: &str) {
     let target = config.get_bundle_target();
-    run_databricks_no_json(config, &["bundle", "run", name, "-t", &target]);
-    print_json(&json!({"ok": true}));
+    let (stdout, stderr) =
+        run_databricks_no_json(config, &["bundle", "run", name, "-t", &target, "--no-wait"]);
+
+    // Extract run ID from output like "Run URL: https://...#job/JOB_ID/run/RUN_ID"
+    // Check both stdout and stderr as databricks CLI outputs to stderr
+    let output = if !stdout.is_empty() { &stdout } else { &stderr };
+    let run_id = output
+        .lines()
+        .find(|line| line.starts_with("Run URL:"))
+        .and_then(|line| line.split("/run/").last().map(|id| id.trim().to_string()));
+
+    if let Some(id) = run_id {
+        print_json(&json!({"ok": true, "run_id": id}));
+    } else {
+        print_json(&json!({"ok": true}));
+    }
 }
