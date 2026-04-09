@@ -9,7 +9,7 @@ Tools are designed to be invoked by AI agents (e.g. from [opencode](https://open
 | Binary    | Crate          | Description                                      |
 |-----------|----------------|--------------------------------------------------|
 | `tkpsql`  | `crates/psql`  | PostgreSQL query tool for agents — hides credentials, enforces per-connection write allowlists |
-| `tkdbr`   | `crates/dbr`   | Databricks CLI wrapper for exploring Unity Catalog metadata and managing jobs/clusters (read-only) |
+| `tkdbr`   | `crates/dbr`   | Databricks CLI wrapper for querying tables, exploring Unity Catalog metadata, and managing jobs/clusters |
 
 ## Prerequisites
 
@@ -69,6 +69,12 @@ Output is compact JSON:
 ### tkdbr
 
 ```sh
+# Run a SQL query (uses warehouse_id from config)
+tkdbr --conn dev query --sql "SELECT * FROM catalog.schema.table"
+
+# With explicit warehouse and row limit
+tkdbr --conn dev query --sql "SELECT id, name FROM catalog.schema.table" --warehouse-id abc --limit 50
+
 # List all accessible catalogs
 tkdbr --conn prod catalogs list [--limit 100]
 
@@ -162,11 +168,13 @@ writable_tables = ["migration_fc_aggregate_ids", "migration_fc_party_ids"]
 ```toml
 [dbr.dev]
 profile = "databricks-dev"           # profile name from ~/.databrickscfg
+warehouse_id = "9f9919ede4d8f98d"    # default SQL warehouse for queries
 allow_job_runs = false               # permit jobs trigger (default: false)
 bundle_target = "dev"                # bundle target (default: "local")
 
 [dbr.prod]
 profile = "databricks-prod"
+warehouse_id = "abc123def456"
 allow_job_runs = false
 bundle_target = "prod"
 

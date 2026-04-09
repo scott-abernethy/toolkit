@@ -55,6 +55,18 @@ enum Commands {
         #[command(subcommand)]
         cmd: BundleCmd,
     },
+    /// Execute a SQL query against a warehouse
+    Query {
+        /// SQL statement to execute
+        #[arg(long)]
+        sql: String,
+        /// SQL warehouse ID (overrides config warehouse_id)
+        #[arg(long)]
+        warehouse_id: Option<String>,
+        /// Maximum number of rows to return
+        #[arg(long, default_value = "100")]
+        limit: u32,
+    },
 }
 
 #[derive(Subcommand)]
@@ -244,5 +256,10 @@ fn main() {
             BundleCmd::Deploy => dbr::bundle_deploy(&config),
             BundleCmd::Run { name } => dbr::bundle_run(&config, &name),
         },
+        Commands::Query {
+            sql,
+            warehouse_id,
+            limit,
+        } => dbr::query(&config, &sql, warehouse_id.as_deref(), limit),
     }
 }

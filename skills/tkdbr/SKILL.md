@@ -1,11 +1,12 @@
 ---
 name: tkdbr
-description: Databricks CLI wrapper for exploring Unity Catalog metadata and managing jobs/clusters/bundles
+description: Databricks CLI wrapper for querying tables, exploring Unity Catalog metadata, and managing jobs/clusters/bundles
 compatibility: opencode
 ---
 
 ## What I do
 
+- Execute SQL queries against Databricks SQL warehouses
 - Query Databricks Unity Catalog (catalogs, schemas, tables, columns)
 - List and inspect jobs, runs, clusters, and SQL warehouses
 - Trigger job runs (with explicit permission via config)
@@ -15,6 +16,7 @@ compatibility: opencode
 ## When to use me
 
 Use this proactively when you need to:
+- Run SQL queries against Databricks tables
 - Explore data assets in Unity Catalog
 - Understand job and workflow definitions
 - Check cluster status and configurations
@@ -24,9 +26,29 @@ Use this proactively when you need to:
 Do **not** use for:
 - Creating or modifying jobs directly (editing YAML is better)
 - Cluster or warehouse provisioning (ask the user instead)
-- Large data exports (use SQL queries or Databricks UI instead)
+- Very large data exports (results are capped by --limit; use Databricks UI for bulk exports)
 
 ## Usage
+
+### Query Tables
+
+```bash
+# Run a SQL query (uses warehouse_id from config)
+tkdbr --conn dev query --sql "SELECT * FROM my_catalog.my_schema.my_table"
+
+# With explicit warehouse and row limit
+tkdbr --conn dev query --sql "SELECT id, name FROM catalog.schema.table WHERE status = 'active'" --warehouse-id 9f9919ede4d8f98d --limit 50
+
+# LIMIT is auto-appended (default 100) if not present in the SQL
+tkdbr --conn dev query --sql "SELECT count(*) FROM catalog.schema.table" --limit 1
+
+# Find your warehouse_id
+tkdbr --conn dev warehouses list
+```
+
+Query output is compact: `{"columns":["id","name"],"rows":[["1","alice"],["2","bob"]],"count":2}`
+
+Long-running queries are polled automatically (up to 2 minutes).
 
 ### Explore Unity Catalog
 

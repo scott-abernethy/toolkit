@@ -3,6 +3,8 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::process::Command;
+use std::thread;
+use std::time::Duration;
 
 // ---------------------------------------------------------------------------
 // Config
@@ -18,6 +20,8 @@ pub struct ConnConfig {
     pub allow_job_runs: Option<bool>,
     /// Bundle target for bundle commands (e.g. "local", "dev", "prod")
     pub bundle_target: Option<String>,
+    /// Default SQL warehouse ID for query commands
+    pub warehouse_id: Option<String>,
 }
 
 impl ConnConfig {
@@ -108,6 +112,73 @@ fn run_databricks(config: &ConnConfig, args: &[&str]) -> Value {
 
     serde_json::from_slice::<Value>(&output.stdout)
         .unwrap_or_else(|e| exit_with_error(format!("Failed to parse CLI output: {}", e)))
+}
+
+/// Run `databricks api post <path>` with a JSON body and return parsed JSON output.
+fn run_databricks_api_post(config: &ConnConfig, path: &str, body: &Value) -> Value {
+    let body_str = serde_json::to_string(body).unwrap();
+    let mut cmd = Command::new("databricks");
+
+    if let Some(profile) = &config.profile {
+        cmd.arg("--profile").arg(profile);
+    }
+
+    cmd.args(["api", "post", path, "--json", &body_str]);
+
+    if let Some(host) = &config.host {
+        cmd.env("DATABRICKS_HOST", host);
+    }
+
+    let output = cmd
+        .output()
+        .unwrap_or_else(|e| exit_with_error(format!("Failed to run databricks CLI: {}", e)));
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let raw_msg = if !stderr.trim().is_empty() {
+            stderr.trim().to_string()
+        } else {
+            stdout.trim().to_string()
+        };
+        exit_with_error(sanitize_cli_error(&raw_msg));
+    }
+
+    serde_json::from_slice::<Value>(&output.stdout)
+        .unwrap_or_else(|e| exit_with_error(format!("Failed to parse API response: {}", e)))
+}
+
+/// Run `databricks api get <path>` and return parsed JSON output.
+fn run_databricks_api_get(config: &ConnConfig, path: &str) -> Value {
+    let mut cmd = Command::new("databricks");
+
+    if let Some(profile) = &config.profile {
+        cmd.arg("--profile").arg(profile);
+    }
+
+    cmd.args(["api", "get", path]);
+
+    if let Some(host) = &config.host {
+        cmd.env("DATABRICKS_HOST", host);
+    }
+
+    let output = cmd
+        .output()
+        .unwrap_or_else(|e| exit_with_error(format!("Failed to run databricks CLI: {}", e)));
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let raw_msg = if !stderr.trim().is_empty() {
+            stderr.trim().to_string()
+        } else {
+            stdout.trim().to_string()
+        };
+        exit_with_error(sanitize_cli_error(&raw_msg));
+    }
+
+    serde_json::from_slice::<Value>(&output.stdout)
+        .unwrap_or_else(|e| exit_with_error(format!("Failed to parse API response: {}", e)))
 }
 
 /// Strip credentials and reduce noisy CLI error messages to a single actionable line.
@@ -669,6 +740,196 @@ mod tests {
         assert!(compact.get("driver").is_none());
         assert!(compact.get("aws_attributes").is_none());
     }
+
+    #[test]
+    fn test_has_limit_clause() {
+        assert!(has_limit_clause("SELECT * FROM t LIMIT 10"));
+        assert!(has_limit_clause("select * from t limit 10"));
+        assert!(has_limit_clause("SELECT * FROM t WHERE x > 1 LIMIT 50"));
+        assert!(!has_limit_clause("SELECT * FROM t"));
+        assert!(!has_limit_clause("SELECT limited FROM t"));
+    }
+
+    #[test]
+    fn test_print_query_result_success() {
+        let raw = json!({
+            "status": {"state": "SUCCEEDED"},
+            "manifest": {
+                "schema": {
+                    "columns": [
+                        {"name": "id", "type_text": "INT"},
+                        {"name": "name", "type_text": "STRING"},
+                    ]
+                },
+                "total_row_count": 2,
+            },
+            "result": {
+                "data_array": [
+                    ["1", "alice"],
+                    ["2", "bob"],
+                ],
+            },
+        });
+
+        // Extract columns like print_query_result does
+        let columns: Vec<&str> = raw["manifest"]["schema"]["columns"]
+            .as_array()
+            .map(|cols| cols.iter().filter_map(|c| c["name"].as_str()).collect())
+            .unwrap_or_default();
+
+        assert_eq!(columns, vec!["id", "name"]);
+
+        let rows = raw["result"]["data_array"].as_array().unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0][0], "1");
+        assert_eq!(rows[0][1], "alice");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Query
+// ---------------------------------------------------------------------------
+
+/// Maximum number of times to poll for a pending/running statement before giving up.
+const QUERY_MAX_POLLS: u32 = 60;
+
+/// Delay between poll attempts.
+const QUERY_POLL_INTERVAL: Duration = Duration::from_secs(2);
+
+/// Execute a SQL query via the Statement Execution API.
+/// Uses `databricks api post /api/2.0/sql/statements` to submit, then polls if needed.
+pub fn query(config: &ConnConfig, sql: &str, warehouse_id: Option<&str>, limit: u32) {
+    let wh_id = warehouse_id
+        .or(config.warehouse_id.as_deref())
+        .unwrap_or_else(|| {
+            exit_with_error(
+                "no warehouse_id: pass --warehouse-id or set warehouse_id in config",
+            )
+        });
+
+    // Apply LIMIT to the SQL if the user hasn't already included one
+    let statement = if limit > 0 && !has_limit_clause(sql) {
+        format!("{} LIMIT {}", sql.trim().trim_end_matches(';'), limit)
+    } else {
+        sql.trim().trim_end_matches(';').to_string()
+    };
+
+    let body = json!({
+        "warehouse_id": wh_id,
+        "statement": statement,
+        "wait_timeout": "50s",
+        "disposition": "INLINE",
+        "format": "JSON_ARRAY",
+    });
+
+    let raw = run_databricks_api_post(config, "/api/2.0/sql/statements", &body);
+
+    let result = poll_until_done(config, raw);
+    print_query_result(&result);
+}
+
+/// Check if SQL already contains a LIMIT clause (simple heuristic).
+fn has_limit_clause(sql: &str) -> bool {
+    // Look for LIMIT as a standalone word (case-insensitive), not inside quotes
+    let upper = sql.to_uppercase();
+    // Simple check: find LIMIT followed by whitespace and a number
+    upper.contains(" LIMIT ") || upper.ends_with(" LIMIT")
+}
+
+/// Poll a statement until it reaches a terminal state.
+fn poll_until_done(config: &ConnConfig, initial: Value) -> Value {
+    let state = initial["status"]["state"]
+        .as_str()
+        .unwrap_or("UNKNOWN");
+
+    match state {
+        "SUCCEEDED" | "FAILED" | "CANCELED" | "CLOSED" => return initial,
+        _ => {} // PENDING or RUNNING — need to poll
+    }
+
+    let statement_id = initial["statement_id"]
+        .as_str()
+        .unwrap_or_else(|| exit_with_error("no statement_id in response for polling"));
+
+    let poll_path = format!("/api/2.0/sql/statements/{}", statement_id);
+
+    eprint!("waiting");
+    for _ in 0..QUERY_MAX_POLLS {
+        thread::sleep(QUERY_POLL_INTERVAL);
+        eprint!(".");
+
+        let resp = run_databricks_api_get(config, &poll_path);
+        let state = resp["status"]["state"].as_str().unwrap_or("UNKNOWN");
+
+        match state {
+            "SUCCEEDED" | "FAILED" | "CANCELED" | "CLOSED" => {
+                eprintln!();
+                return resp;
+            }
+            _ => continue,
+        }
+    }
+
+    eprintln!();
+    exit_with_error(format!(
+        "query timed out after {}s (statement_id: {})",
+        QUERY_MAX_POLLS as u64 * QUERY_POLL_INTERVAL.as_secs(),
+        statement_id
+    ))
+}
+
+/// Format and print query results as compact JSON.
+fn print_query_result(raw: &Value) {
+    let state = raw["status"]["state"].as_str().unwrap_or("UNKNOWN");
+
+    if state != "SUCCEEDED" {
+        let error_msg = raw["status"]
+            .get("error")
+            .and_then(|e| e.get("message"))
+            .and_then(|m| m.as_str())
+            .unwrap_or("query failed");
+        print_json(&json!({"error": error_msg, "state": state}));
+        std::process::exit(1);
+    }
+
+    // Extract column names from manifest
+    let columns: Vec<&str> = raw["manifest"]["schema"]["columns"]
+        .as_array()
+        .map(|cols| {
+            cols.iter()
+                .filter_map(|c| c["name"].as_str())
+                .collect()
+        })
+        .unwrap_or_default();
+
+    // Extract row data
+    let rows = raw["result"]["data_array"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+
+    let row_count = raw["manifest"]
+        .get("total_row_count")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(rows.len() as u64);
+
+    // If truncated, note it
+    let truncated = raw["result"]
+        .get("truncated")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    let mut result = json!({
+        "columns": columns,
+        "rows": rows,
+        "count": row_count,
+    });
+
+    if truncated {
+        result["truncated"] = json!(true);
+    }
+
+    print_json(&result);
 }
 
 // ---------------------------------------------------------------------------
