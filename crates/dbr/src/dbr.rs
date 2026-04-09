@@ -560,7 +560,14 @@ pub fn tables_list(
     omit_columns: bool,
 ) {
     let limit_str = limit.to_string();
-    let mut args = vec!["tables", "list", catalog, schema, "--max-results", &limit_str];
+    let mut args = vec![
+        "tables",
+        "list",
+        catalog,
+        schema,
+        "--max-results",
+        &limit_str,
+    ];
     if omit_columns {
         args.push("--omit-columns");
     }
@@ -580,18 +587,17 @@ pub fn tables_list(
 
                     if !omit_columns {
                         if let Some(cols) = t.get("columns").and_then(Value::as_array) {
-                            table_obj["columns"] = json!(
-                                cols.iter()
-                                    .map(|c| {
-                                        json!({
-                                            "name": c["name"],
-                                            "type": c["type_text"],
-                                            "nullable": c.get("nullable").unwrap_or(&json!(true)),
-                                            "comment": c.get("comment"),
-                                        })
+                            table_obj["columns"] = json!(cols
+                                .iter()
+                                .map(|c| {
+                                    json!({
+                                        "name": c["name"],
+                                        "type": c["type_text"],
+                                        "nullable": c.get("nullable").unwrap_or(&json!(true)),
+                                        "comment": c.get("comment"),
                                     })
-                                    .collect::<Vec<_>>()
-                            );
+                                })
+                                .collect::<Vec<_>>());
                         }
                     }
 
@@ -609,21 +615,18 @@ pub fn tables_get(config: &ConnConfig, catalog: &str, schema: &str, table: &str)
     let full_name = format!("{}.{}.{}", catalog, schema, table);
     let raw = run_databricks(config, &["tables", "get", &full_name]);
 
-    let columns = raw
-        .get("columns")
-        .and_then(Value::as_array)
-        .map(|cols| {
-            cols.iter()
-                .map(|c| {
-                    json!({
-                        "name": c["name"],
-                        "type": c["type_text"],
-                        "nullable": c.get("nullable").unwrap_or(&json!(true)),
-                        "comment": c.get("comment"),
-                    })
+    let columns = raw.get("columns").and_then(Value::as_array).map(|cols| {
+        cols.iter()
+            .map(|c| {
+                json!({
+                    "name": c["name"],
+                    "type": c["type_text"],
+                    "nullable": c.get("nullable").unwrap_or(&json!(true)),
+                    "comment": c.get("comment"),
                 })
-                .collect::<Vec<_>>()
-        });
+            })
+            .collect::<Vec<_>>()
+    });
 
     print_json(&json!({
         "name": raw["name"],
@@ -802,9 +805,7 @@ pub fn query(config: &ConnConfig, sql: &str, warehouse_id: Option<&str>, limit: 
     let wh_id = warehouse_id
         .or(config.warehouse_id.as_deref())
         .unwrap_or_else(|| {
-            exit_with_error(
-                "no warehouse_id: pass --warehouse-id or set warehouse_id in config",
-            )
+            exit_with_error("no warehouse_id: pass --warehouse-id or set warehouse_id in config")
         });
 
     // Apply LIMIT to the SQL if the user hasn't already included one
@@ -838,9 +839,7 @@ fn has_limit_clause(sql: &str) -> bool {
 
 /// Poll a statement until it reaches a terminal state.
 fn poll_until_done(config: &ConnConfig, initial: Value) -> Value {
-    let state = initial["status"]["state"]
-        .as_str()
-        .unwrap_or("UNKNOWN");
+    let state = initial["status"]["state"].as_str().unwrap_or("UNKNOWN");
 
     match state {
         "SUCCEEDED" | "FAILED" | "CANCELED" | "CLOSED" => return initial,
@@ -895,11 +894,7 @@ fn print_query_result(raw: &Value) {
     // Extract column names from manifest
     let columns: Vec<&str> = raw["manifest"]["schema"]["columns"]
         .as_array()
-        .map(|cols| {
-            cols.iter()
-                .filter_map(|c| c["name"].as_str())
-                .collect()
-        })
+        .map(|cols| cols.iter().filter_map(|c| c["name"].as_str()).collect())
         .unwrap_or_default();
 
     // Extract row data
@@ -938,18 +933,18 @@ fn print_query_result(raw: &Value) {
 
 pub fn bundle_validate(config: &ConnConfig) {
     let target = config.get_bundle_target();
-    let raw = run_databricks(config, &["bundle", "validate", "-t", &target]);
-    print_json(&json!({"ok": true, "message": "bundle validated", "output": raw}));
+    let _raw = run_databricks(config, &["bundle", "validate", "-t", &target]);
+    print_json(&json!({"ok": true}));
 }
 
 pub fn bundle_deploy(config: &ConnConfig) {
     let target = config.get_bundle_target();
-    let raw = run_databricks(config, &["bundle", "deploy", "-t", &target]);
-    print_json(&json!({"ok": true, "message": "bundle deployed", "output": raw}));
+    let _raw = run_databricks(config, &["bundle", "deploy", "-t", &target]);
+    print_json(&json!({"ok": true}));
 }
 
 pub fn bundle_run(config: &ConnConfig, name: &str) {
     let target = config.get_bundle_target();
-    let raw = run_databricks(config, &["bundle", "run", name, "-t", &target]);
-    print_json(&json!({"ok": true, "message": format!("bundle run '{}' triggered", name), "output": raw}));
+    let _raw = run_databricks(config, &["bundle", "run", name, "-t", &target]);
+    print_json(&json!({"ok": true}));
 }
