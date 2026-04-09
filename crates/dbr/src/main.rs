@@ -204,6 +204,9 @@ enum BundleCmd {
         /// Name of the bundle resource to run
         #[arg(value_name = "NAME")]
         name: String,
+        /// Comma-separated list of task keys to run (for jobs)
+        #[arg(long)]
+        only: Option<String>,
     },
 }
 
@@ -254,7 +257,7 @@ fn main() {
         Commands::Bundle { cmd } => match cmd {
             BundleCmd::Validate => dbr::bundle_validate(&config),
             BundleCmd::Deploy => dbr::bundle_deploy(&config),
-            BundleCmd::Run { name } => dbr::bundle_run(&config, &name),
+            BundleCmd::Run { name, only } => dbr::bundle_run(&config, &name, only.as_deref()),
         },
         Commands::Query {
             sql,

@@ -983,10 +983,16 @@ pub fn bundle_deploy(config: &ConnConfig) {
     print_json(&json!({"ok": true}));
 }
 
-pub fn bundle_run(config: &ConnConfig, name: &str) {
+pub fn bundle_run(config: &ConnConfig, name: &str, only: Option<&str>) {
     let target = config.get_bundle_target();
-    let (stdout, stderr) =
-        run_databricks_no_json(config, &["bundle", "run", name, "-t", &target, "--no-wait"]);
+    let mut args = vec!["bundle", "run", name, "-t", &target, "--no-wait"];
+
+    if let Some(only_val) = only {
+        args.push("--only");
+        args.push(only_val);
+    }
+
+    let (stdout, stderr) = run_databricks_no_json(config, &args);
 
     // Extract run ID from output like "Run URL: https://...#job/JOB_ID/run/RUN_ID"
     // Check both stdout and stderr as databricks CLI outputs to stderr
