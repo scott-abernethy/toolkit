@@ -23,6 +23,19 @@ Tools are designed to be invoked by AI agents (e.g. from [opencode](https://open
 just install
 ```
 
+## Agent Skills
+
+To enable agent support (for [opencode](https://opencode.ai) and similar tools), link the skills to your opencode config:
+
+```sh
+# Link all skills
+for skill in skills/*/; do
+  ln -s "$(pwd)/$skill" ~/.config/opencode/skills/$(basename "$skill")
+done
+```
+
+See [skills/README.md](skills/README.md) for details.
+
 ## Usage
 
 ### tkpsql
@@ -98,6 +111,11 @@ tkdbr --conn prod clusters get --cluster-id abc-123
 # List and inspect SQL warehouses
 tkdbr --conn prod warehouses list
 tkdbr --conn prod warehouses get --warehouse-id abc-123
+
+# Manage Databricks bundles (uses bundle_target from config, defaults to "local")
+tkdbr --conn prod bundle validate
+tkdbr --conn prod bundle deploy
+tkdbr --conn prod bundle run my-job
 ```
 
 Output is compact, agent-friendly JSON optimized for token efficiency. All read operations are safe; only `jobs trigger` requires explicit permission via `allow_job_runs = true` in config.
@@ -145,15 +163,18 @@ writable_tables = ["migration_fc_aggregate_ids", "migration_fc_party_ids"]
 [dbr.dev]
 profile = "databricks-dev"           # profile name from ~/.databrickscfg
 allow_job_runs = false               # permit jobs trigger (default: false)
+bundle_target = "dev"                # bundle target (default: "local")
 
 [dbr.prod]
 profile = "databricks-prod"
 allow_job_runs = false
+bundle_target = "prod"
 
 # Optional: override workspace host (useful for staging/testing)
 [dbr.staging]
 profile = "databricks-prod"
 host = "staging-workspace.databricks.com"
+bundle_target = "staging"
 ```
 
 If only one connection is configured, `--conn` can be omitted. Override the config file path with `TOOLKIT_CONFIG=/path/to/other.toml`.

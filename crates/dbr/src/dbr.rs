@@ -16,11 +16,19 @@ pub struct ConnConfig {
     pub host: Option<String>,
     /// Allow triggering job runs via `jobs trigger` (default: false)
     pub allow_job_runs: Option<bool>,
+    /// Bundle target for bundle commands (e.g. "local", "dev", "prod")
+    pub bundle_target: Option<String>,
 }
 
 impl ConnConfig {
     fn can_trigger_runs(&self) -> bool {
         self.allow_job_runs.unwrap_or(false)
+    }
+
+    fn get_bundle_target(&self) -> String {
+        self.bundle_target
+            .clone()
+            .unwrap_or_else(|| "local".to_string())
     }
 }
 
@@ -661,4 +669,26 @@ mod tests {
         assert!(compact.get("driver").is_none());
         assert!(compact.get("aws_attributes").is_none());
     }
+}
+
+// ---------------------------------------------------------------------------
+// Bundles
+// ---------------------------------------------------------------------------
+
+pub fn bundle_validate(config: &ConnConfig) {
+    let target = config.get_bundle_target();
+    let raw = run_databricks(config, &["bundle", "validate", "-t", &target]);
+    print_json(&json!({"ok": true, "message": "bundle validated", "output": raw}));
+}
+
+pub fn bundle_deploy(config: &ConnConfig) {
+    let target = config.get_bundle_target();
+    let raw = run_databricks(config, &["bundle", "deploy", "-t", &target]);
+    print_json(&json!({"ok": true, "message": "bundle deployed", "output": raw}));
+}
+
+pub fn bundle_run(config: &ConnConfig, name: &str) {
+    let target = config.get_bundle_target();
+    let raw = run_databricks(config, &["bundle", "run", name, "-t", &target]);
+    print_json(&json!({"ok": true, "message": format!("bundle run '{}' triggered", name), "output": raw}));
 }

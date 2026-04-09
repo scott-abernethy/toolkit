@@ -50,6 +50,11 @@ enum Commands {
         #[command(subcommand)]
         cmd: TablesCmd,
     },
+    /// Manage Databricks bundles (validate, deploy, run)
+    Bundle {
+        #[command(subcommand)]
+        cmd: BundleCmd,
+    },
 }
 
 #[derive(Subcommand)]
@@ -176,6 +181,20 @@ enum TablesCmd {
     },
 }
 
+#[derive(Subcommand)]
+enum BundleCmd {
+    /// Validate the bundle (runs `databricks bundle validate -t <target>`)
+    Validate,
+    /// Deploy the bundle (runs `databricks bundle deploy -t <target>`)
+    Deploy,
+    /// Run a bundle resource (runs `databricks bundle run <name> -t <target>`)
+    Run {
+        /// Name of the bundle resource to run
+        #[arg(value_name = "NAME")]
+        name: String,
+    },
+}
+
 fn main() {
     let cli = Cli::parse();
     let config = dbr::load_config(cli.conn.as_deref());
@@ -219,6 +238,11 @@ fn main() {
                 schema,
                 table,
             } => dbr::tables_get(&config, &catalog, &schema, &table),
+        },
+        Commands::Bundle { cmd } => match cmd {
+            BundleCmd::Validate => dbr::bundle_validate(&config),
+            BundleCmd::Deploy => dbr::bundle_deploy(&config),
+            BundleCmd::Run { name } => dbr::bundle_run(&config, &name),
         },
     }
 }
