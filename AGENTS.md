@@ -61,6 +61,7 @@ some_setting = "value"
 - The config file path can be overridden with the `TOOLKIT_CONFIG` environment variable.
 - Config loading is handled by `common::load_section::<T>("section")` — each tool defines its own config struct and requests its slice.
 - Tools should never expose credentials in their output.
+- **Credential injection**: all credentials must live in toolkit's `config.toml` — never in external config files (e.g. `~/.databrickscfg`). When a tool wraps an external CLI, it injects credentials via environment variables at invocation time. This ensures a single file to encrypt and no plaintext credential files for agents to discover.
 
 ## Building & Testing
 

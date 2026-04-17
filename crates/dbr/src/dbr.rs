@@ -12,10 +12,10 @@ use std::time::Duration;
 
 #[derive(Deserialize)]
 pub struct ConnConfig {
-    /// Databricks CLI profile name from ~/.databrickscfg
-    pub profile: Option<String>,
-    /// Optional workspace host override (takes precedence over profile's host)
-    pub host: Option<String>,
+    /// Databricks workspace host (e.g. "https://dbc-abc123.cloud.databricks.com")
+    pub host: String,
+    /// Databricks personal access token
+    pub token: String,
     /// Allow triggering job runs via `jobs trigger` (default: false)
     pub allow_job_runs: Option<bool>,
     /// Bundle target for bundle commands (e.g. "local", "dev", "prod")
@@ -79,20 +79,14 @@ fn sorted_keys(map: &HashMap<String, ConnConfig>) -> Vec<String> {
 fn run_databricks(config: &ConnConfig, args: &[&str]) -> Value {
     let mut cmd = Command::new("databricks");
 
-    // Global flags before subcommand
-    if let Some(profile) = &config.profile {
-        cmd.arg("--profile").arg(profile);
-    }
     cmd.arg("--output").arg("json");
 
     // Subcommand and its args
     cmd.args(args);
 
-    // Host override via env (won't override a profile's host if using --profile,
-    // but useful when profile is absent)
-    if let Some(host) = &config.host {
-        cmd.env("DATABRICKS_HOST", host);
-    }
+    // Inject credentials via env vars — no external config files needed
+    cmd.env("DATABRICKS_HOST", &config.host);
+    cmd.env("DATABRICKS_TOKEN", &config.token);
 
     let output = cmd
         .output()
@@ -119,18 +113,12 @@ fn run_databricks(config: &ConnConfig, args: &[&str]) -> Value {
 fn run_databricks_no_json(config: &ConnConfig, args: &[&str]) -> (String, String) {
     let mut cmd = Command::new("databricks");
 
-    // Global flags before subcommand
-    if let Some(profile) = &config.profile {
-        cmd.arg("--profile").arg(profile);
-    }
-
     // Subcommand and its args
     cmd.args(args);
 
-    // Host override via env
-    if let Some(host) = &config.host {
-        cmd.env("DATABRICKS_HOST", host);
-    }
+    // Inject credentials via env vars — no external config files needed
+    cmd.env("DATABRICKS_HOST", &config.host);
+    cmd.env("DATABRICKS_TOKEN", &config.token);
 
     let output = cmd
         .output()
@@ -159,15 +147,11 @@ fn run_databricks_api_post(config: &ConnConfig, path: &str, body: &Value) -> Val
     let body_str = serde_json::to_string(body).unwrap();
     let mut cmd = Command::new("databricks");
 
-    if let Some(profile) = &config.profile {
-        cmd.arg("--profile").arg(profile);
-    }
-
     cmd.args(["api", "post", path, "--json", &body_str]);
 
-    if let Some(host) = &config.host {
-        cmd.env("DATABRICKS_HOST", host);
-    }
+    // Inject credentials via env vars — no external config files needed
+    cmd.env("DATABRICKS_HOST", &config.host);
+    cmd.env("DATABRICKS_TOKEN", &config.token);
 
     let output = cmd
         .output()
@@ -192,15 +176,11 @@ fn run_databricks_api_post(config: &ConnConfig, path: &str, body: &Value) -> Val
 fn run_databricks_api_get(config: &ConnConfig, path: &str) -> Value {
     let mut cmd = Command::new("databricks");
 
-    if let Some(profile) = &config.profile {
-        cmd.arg("--profile").arg(profile);
-    }
-
     cmd.args(["api", "get", path]);
 
-    if let Some(host) = &config.host {
-        cmd.env("DATABRICKS_HOST", host);
-    }
+    // Inject credentials via env vars — no external config files needed
+    cmd.env("DATABRICKS_HOST", &config.host);
+    cmd.env("DATABRICKS_TOKEN", &config.token);
 
     let output = cmd
         .output()
@@ -226,7 +206,7 @@ fn sanitize_cli_error(msg: &str) -> String {
     let lower = msg.to_lowercase();
 
     if lower.contains("401") || lower.contains("unauthorized") {
-        return "authentication error: check your profile token".to_string();
+        return "authentication error: check your token".to_string();
     }
     if lower.contains("403") || lower.contains("forbidden") || lower.contains("permission denied") {
         return "permission denied".to_string();
@@ -692,7 +672,7 @@ mod tests {
     fn test_sanitize_auth_error() {
         assert_eq!(
             sanitize_cli_error("Error: 401 Unauthorized"),
-            "authentication error: check your profile token"
+            "authentication error: check your token"
         );
     }
 

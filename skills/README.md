@@ -93,7 +93,8 @@ user     = "readonly"
 password = "secret"
 
 [dbr.dev]
-profile = "databricks-dev"
+host = "https://dbc-abc123.cloud.databricks.com"
+token = "dapi..."
 bundle_target = "dev"
 ```
 

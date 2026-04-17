@@ -57,11 +57,15 @@ Each tool defines its own config struct and deserializes its named section. If o
 
 ### `tkdbr` (Databricks Tool)
 
-- Wraps Databricks CLI and REST API using profile from `~/.databrickscfg`
+- Wraps Databricks CLI and REST API; credentials injected via env vars (`DATABRICKS_HOST`, `DATABRICKS_TOKEN`)
 - All read operations are safe by default; `allow_job_runs = true` required to trigger jobs
 - Bundle operations: `validate`, `deploy`, `run`
 - Commands: `catalogs`, `schemas`, `tables`, `jobs`, `runs`, `clusters`, `warehouses`, `bundle`, `query`
 - Output includes sensible defaults (e.g., `--limit 25` for jobs, `--limit 100` for queries)
+
+### Credential Injection
+
+All credentials must live in toolkit's `config.toml` — never in external config files (e.g. `~/.databrickscfg`). When a tool wraps an external CLI, it injects credentials via environment variables at invocation time. This ensures a single file to encrypt and no plaintext credential files for agents to discover. New tools that wrap external CLIs must follow this pattern.
 
 ### Output Philosophy
 
@@ -90,7 +94,8 @@ tls = false
 writable_tables = []
 
 [dbr.dev]
-profile = "databricks-dev"
+host = "https://dbc-abc123.cloud.databricks.com"
+token = "dapi..."
 warehouse_id = "abc123"
 allow_job_runs = false
 bundle_target = "dev"

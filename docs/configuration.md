@@ -39,24 +39,20 @@ writable_tables = ["migration_fc_aggregate_ids", "migration_fc_party_ids"]
 
 ## tkdbr
 
-`tkdbr` supports multiple named Databricks connections:
+`tkdbr` supports multiple named Databricks connections. Credentials are stored directly in `config.toml` and injected via environment variables when invoking the Databricks CLI — no `~/.databrickscfg` file is needed.
 
 ```toml
 [dbr.dev]
-profile = "databricks-dev"           # profile name from ~/.databrickscfg
+host = "https://dbc-abc123.cloud.databricks.com"
+token = "dapi..."                    # personal access token
 warehouse_id = "9f9919ede4d8f98d"    # default SQL warehouse for queries
 allow_job_runs = false               # permit jobs trigger (default: false)
 bundle_target = "dev"                # bundle target (default: "local")
 
 [dbr.prod]
-profile = "databricks-prod"
+host = "https://dbc-def456.cloud.databricks.com"
+token = "dapi..."
 warehouse_id = "abc123def456"
 allow_job_runs = false
 bundle_target = "prod"
-
-# Optional: override workspace host (useful for staging/testing)
-[dbr.staging]
-profile = "databricks-prod"
-host = "staging-workspace.databricks.com"
-bundle_target = "staging"
 ```
