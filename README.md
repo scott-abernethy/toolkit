@@ -23,18 +23,40 @@ Tools are designed to be invoked by AI agents (e.g. from [opencode](https://open
 just install
 ```
 
-## Agent Skills
+## Agent Skills & Agents
 
-To enable agent support (for [opencode](https://opencode.ai) and similar tools), link the skills to your opencode config:
+This repo contains two types of AI agent configuration:
+
+### Skills (`skills/`)
+
+- **Tool skills** — teach the agent to use the CLI tools in this repo (`tkpsql`, `tkdbr`, etc.)
+- **Workflow skills** — encode team conventions so the agent follows them automatically *(coming soon)*
+
+Link skills for [opencode](https://opencode.ai):
 
 ```sh
-# Link all skills
 for skill in skills/*/; do
   ln -s "$(pwd)/$skill" ~/.config/opencode/skills/$(basename "$skill")
 done
 ```
 
-See [skills/README.md](skills/README.md) for details.
+### Agents (`agents/`)
+
+Custom agents for [GitHub Copilot CLI](https://docs.github.com/copilot/concepts/agents/about-copilot-cli) — specialized sub-agents with dedicated models and focused workflows.
+
+| Agent | Description |
+|-------|-------------|
+| `git-flow` | Enforces commit format, branch naming, and PR conventions |
+
+Link agents for GitHub Copilot CLI:
+
+```sh
+for agent in agents/*.agent.md; do
+  ln -s "$(pwd)/$agent" ~/.copilot/agents/$(basename "$agent")
+done
+```
+
+See [skills/README.md](skills/README.md) for full setup details.
 
 ## Usage
 

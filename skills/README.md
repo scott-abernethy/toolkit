@@ -1,26 +1,20 @@
-# Agent Skills for Toolkit
+# Agent Skills & Agents for Toolkit
 
-This directory contains [opencode](https://opencode.ai) agent skill definitions for the toolkit CLI tools.
+This repo contains two types of AI agent configuration:
 
-Each skill file tells the agent when and how to use the corresponding tool.
+- **Skills** (`skills/`) — for [opencode](https://opencode.ai) and similar tools
+- **Agents** (`agents/`) — for [GitHub Copilot CLI](https://docs.github.com/copilot/concepts/agents/about-copilot-cli)
 
 ## Setup
 
-After cloning the toolkit repository and installing tools:
+After cloning the toolkit repository:
 
 ```bash
-# 1. Install the CLI tools
+# 1. Install the CLI tools (required for tool skills only)
 cd ~/path/to/toolkit
 just install
 
-# 2. Link the skills to opencode
-ln -s ~/path/to/toolkit/skills/tkpsql ~/.config/opencode/skills/tkpsql
-ln -s ~/path/to/toolkit/skills/tkdbr ~/.config/opencode/skills/tkdbr
-```
-
-Or to link all skills at once:
-
-```bash
+# 2. Link all skills to opencode
 cd ~/path/to/toolkit
 for skill in skills/*/; do
   skill_name=$(basename "$skill")
@@ -37,10 +31,18 @@ for skill in skills/*/; do
 done
 ```
 
-## Skills
+## Tool Skills
+
+These skills wrap the CLI tools in this repo. They require `just install` to be run first.
 
 - **[tkpsql](tkpsql/SKILL.md)** - PostgreSQL queries with safe defaults
 - **[tkdbr](tkdbr/SKILL.md)** - Databricks metadata exploration and bundle management
+
+## Workflow Skills
+
+These skills encode team conventions and processes. No installation beyond symlinking is required.
+
+*(Coming soon — see the [Agents](../README.md#agents) section in the root README for the git-flow workflow agent)*
 
 ## How it works
 
@@ -56,11 +58,15 @@ When you ask the agent a question, it searches your installed skills and automat
 
 ## Adding new skills
 
-To create a new skill for a toolkit tool:
-
+**Tool skill** (wraps a CLI tool):
 1. Create a directory: `skills/<tool_name>/`
-2. Add a `SKILL.md` file with the frontmatter and documentation (follow the pattern in `tkpsql/SKILL.md`)
-3. Link it to opencode: `ln -s $(pwd)/skills/<tool_name> ~/.config/opencode/skills/<tool_name>`
+2. Add a `SKILL.md` file (follow the pattern in `tkpsql/SKILL.md`)
+3. Link it: `ln -s $(pwd)/skills/<tool_name> ~/.config/opencode/skills/<tool_name>`
+
+**Workflow skill** (team convention):
+1. Create a directory: `skills/<skill_name>/`
+2. Add a `SKILL.md` describing the convention/process the agent should follow
+3. Link it: `ln -s $(pwd)/skills/<skill_name> ~/.config/opencode/skills/<skill_name>`
 
 ## Environment Setup
 

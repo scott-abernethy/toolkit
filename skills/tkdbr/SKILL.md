@@ -34,69 +34,61 @@ Do **not** use for:
 
 ```bash
 # Run a SQL query (uses warehouse_id from config)
-tkdbr --conn dev query --sql "SELECT * FROM my_catalog.my_schema.my_table"
+tkdbr query --sql "SELECT * FROM my_catalog.my_schema.my_table"
 
 # With explicit warehouse and row limit
-tkdbr --conn dev query --sql "SELECT id, name FROM catalog.schema.table WHERE status = 'active'" --warehouse-id 9f9919ede4d8f98d --limit 50
-
-# LIMIT is auto-appended (default 100) if not present in the SQL
-tkdbr --conn dev query --sql "SELECT count(*) FROM catalog.schema.table" --limit 1
+tkdbr query --sql "SELECT id, name FROM catalog.schema.table WHERE status = 'active'" --warehouse-id 9f9919ede4d8f98d --limit 50
 
 # Find your warehouse_id
-tkdbr --conn dev warehouses list
+tkdbr warehouses list
 ```
-
-Query output is compact: `{"columns":["id","name"],"rows":[["1","alice"],["2","bob"]],"count":2}`
-
-Long-running queries are polled automatically (up to 2 minutes).
 
 ### Explore Unity Catalog
 
 ```bash
 # List catalogs
-tkdbr --conn prod catalogs list [--limit 100]
-tkdbr --conn prod catalogs get --catalog my_catalog
+tkdbr catalogs list [--limit 100]
+tkdbr catalogs get --catalog my_catalog
 
 # List schemas in a catalog
-tkdbr --conn prod schemas list --catalog my_catalog [--limit 100]
-tkdbr --conn prod schemas get --catalog my_catalog --schema analytics
+tkdbr schemas list --catalog my_catalog [--limit 100]
+tkdbr schemas get --catalog my_catalog --schema analytics
 
 # List tables in a schema
-tkdbr --conn prod tables list --catalog my_catalog --schema analytics [--limit 100]
+tkdbr tables list --catalog my_catalog --schema analytics [--limit 100]
 
 # Get full table schema (columns, data types, descriptions)
-tkdbr --conn prod tables get --catalog my_catalog --schema analytics --table fact_orders
+tkdbr tables get --catalog my_catalog --schema analytics --table fact_orders
 
 # Omit column definitions for lighter responses
-tkdbr --conn prod tables list --catalog my_catalog --schema analytics --omit-columns
+tkdbr tables list --catalog my_catalog --schema analytics --omit-columns
 ```
 
 ### Query Jobs and Runs
 
 ```bash
 # List all jobs
-tkdbr --conn prod jobs list [--limit 25]
-tkdbr --conn prod jobs get --job-id 123
+tkdbr jobs list [--limit 25]
+tkdbr jobs get --job-id 123
 
 # List recent runs for a job
-tkdbr --conn prod runs list --job-id 123 [--limit 10]
-tkdbr --conn prod runs get --run-id 456
-tkdbr --conn prod runs output --run-id 456
+tkdbr runs list --job-id 123 [--limit 10]
+tkdbr runs get --run-id 456
+tkdbr runs output --run-id 456
 
-# Trigger a job run (requires allow_job_runs = true in config)
-tkdbr --conn prod jobs trigger --job-id 123
+# Trigger a job run
+tkdbr jobs trigger --job-id 123
 ```
 
 ### Inspect Clusters and Warehouses
 
 ```bash
 # List clusters
-tkdbr --conn prod clusters list
-tkdbr --conn prod clusters get --cluster-id abc-123
+tkdbr clusters list
+tkdbr clusters get --cluster-id abc-123
 
 # List SQL warehouses
-tkdbr --conn prod warehouses list
-tkdbr --conn prod warehouses get --warehouse-id xyz-789
+tkdbr warehouses list
 ```
 
 ### Manage Databricks Bundles
@@ -105,14 +97,13 @@ Bundles are deployed workflows defined in YAML. The bundle target (e.g., `local`
 
 ```bash
 # Validate the bundle (checks YAML syntax and references)
-tkdbr --conn dev bundle validate
+tkdbr bundle validate
 
 # Deploy the bundle to the configured target
-tkdbr --conn dev bundle deploy
+tkdbr bundle deploy
 
 # Run a named resource from the bundle
-tkdbr --conn dev bundle run my-job
-tkdbr --conn dev bundle run ml-pipeline
+tkdbr bundle run my-job
 ```
 
 ## Output Format
