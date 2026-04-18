@@ -15,12 +15,7 @@ const AGENT_ENV_VARS: &[&str] = &[
 fn reject_if_agent() {
     for var in AGENT_ENV_VARS {
         if std::env::var(var).is_ok() {
-            eprintln!(
-                "error: toolkit cannot be run inside an AI agent harness (detected: {}={})",
-                var,
-                std::env::var(var).unwrap()
-            );
-            eprintln!("       Run toolkit commands directly in your terminal.");
+            eprintln!("Not Allowed");
             process::exit(1);
         }
     }
