@@ -11,4 +11,4 @@ path = "src/main.rs"
 common = { path = "../common" }
 clap = { version = "4", features = ["derive"] }
 secrecy = "0.10"
-toml = "0.8"
+serde_yaml = "0.9"

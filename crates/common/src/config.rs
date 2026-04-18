@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 /// Resolve the config file path.
 /// Checks `TOOLKIT_CONFIG` env var first, then falls back to
-/// `~/.config/toolkit/config.toml`.
+/// `~/.config/toolkit/config.yaml`.
 pub fn config_path() -> PathBuf {
     if let Ok(p) = std::env::var("TOOLKIT_CONFIG") {
         return PathBuf::from(p);
@@ -13,11 +13,11 @@ pub fn config_path() -> PathBuf {
     PathBuf::from(home)
         .join(".config")
         .join("toolkit")
-        .join("config.toml")
+        .join("config.yaml")
 }
 
-/// Return true if the parsed TOML contains sops metadata (i.e. the file is encrypted).
-pub fn is_encrypted(value: &toml::Value) -> bool {
+/// Return true if the parsed YAML contains sops metadata (i.e. the file is encrypted).
+pub fn is_encrypted(value: &serde_yaml::Value) -> bool {
     value
         .get("sops")
         .and_then(|s| s.get("version"))
@@ -34,7 +34,7 @@ pub fn decrypt_config(path: &std::path::Path) -> String {
     });
 
     let output = std::process::Command::new("sops")
-        .args(["--decrypt", "--output-type", "toml"])
+        .args(["--decrypt", "--output-type", "yaml"])
         .arg(path)
         .env("SOPS_AGE_KEY", key.expose_secret())
         // Clear any ambient SOPS_AGE_KEY_FILE to avoid interference
@@ -70,12 +70,12 @@ pub fn load_section<T: DeserializeOwned>(section: &str) -> T {
         exit_with_error(format!("Failed to read config {}: {}", path.display(), e))
     });
 
-    let probe: toml::Value = toml::from_str(&contents)
+    let probe: serde_yaml::Value = serde_yaml::from_str(&contents)
         .unwrap_or_else(|e| exit_with_error(format!("Invalid config: {}", e)));
 
-    let full: toml::Value = if is_encrypted(&probe) {
+    let full: serde_yaml::Value = if is_encrypted(&probe) {
         let decrypted = decrypt_config(&path);
-        toml::from_str(&decrypted)
+        serde_yaml::from_str(&decrypted)
             .unwrap_or_else(|e| exit_with_error(format!("Invalid decrypted config: {}", e)))
     } else {
         probe
@@ -95,8 +95,8 @@ mod tests {
 
     #[test]
     fn test_config_path_env_override() {
-        std::env::set_var("TOOLKIT_CONFIG", "/tmp/test-toolkit.toml");
-        assert_eq!(config_path(), PathBuf::from("/tmp/test-toolkit.toml"));
+        std::env::set_var("TOOLKIT_CONFIG", "/tmp/test-toolkit.yaml");
+        assert_eq!(config_path(), PathBuf::from("/tmp/test-toolkit.yaml"));
         std::env::remove_var("TOOLKIT_CONFIG");
     }
 
@@ -104,20 +104,19 @@ mod tests {
     fn test_config_path_default() {
         std::env::remove_var("TOOLKIT_CONFIG");
         let path = config_path();
-        assert!(path.ends_with(".config/toolkit/config.toml"));
+        assert!(path.ends_with(".config/toolkit/config.yaml"));
     }
 
     #[test]
     fn test_is_encrypted_plaintext() {
-        let val: toml::Value = toml::from_str("[psql.local]\nhost = \"localhost\"").unwrap();
+        let val: serde_yaml::Value = serde_yaml::from_str("psql:\n  local:\n    host: localhost").unwrap();
         assert!(!is_encrypted(&val));
     }
 
     #[test]
     fn test_is_encrypted_sops() {
-        let val: toml::Value =
-            toml::from_str("[sops]\nversion = \"3.8.0\"\n[psql.local]\nhost = \"ENC[...]\"")
-                .unwrap();
+        let val: serde_yaml::Value =
+            serde_yaml::from_str("sops:\n  version: \"3.8.0\"\npsql:\n  local:\n    host: ENC[...]").unwrap();
         assert!(is_encrypted(&val));
     }
 }

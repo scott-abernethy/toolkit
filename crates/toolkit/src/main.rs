@@ -107,9 +107,13 @@ fn cmd_init() {
 
 fn cmd_config_edit() {
     let path = config::config_path();
-    if !path.exists() {
-        eprintln!("Config not found: {}", path.display());
-        process::exit(1);
+
+    // Ensure the config directory exists.
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).unwrap_or_else(|e| {
+            eprintln!("Failed to create config directory: {}", e);
+            process::exit(1);
+        });
     }
 
     let key = key::get_private_key().unwrap_or_else(|e| {
@@ -117,9 +121,37 @@ fn cmd_config_edit() {
         process::exit(1);
     });
 
+    let public_key = key::public_key_from_private(&key).unwrap_or_else(|e| {
+        eprintln!("Error deriving public key: {}", e);
+        process::exit(1);
+    });
+
+    // sops can only edit files it encrypted itself. If an existing plaintext
+    // file is present, encrypt it in-place first. New (non-existent) files are
+    // handled by sops directly — it opens the editor and encrypts on save.
+    if path.exists() {
+        let contents = std::fs::read_to_string(&path).unwrap_or_default();
+        let probe: serde_yaml::Value = serde_yaml::from_str(&contents).unwrap_or(serde_yaml::Value::Null);
+        if !config::is_encrypted(&probe) {
+            let status = process::Command::new("sops")
+                .args(["--encrypt", "-i"])
+                .arg(&path)
+                .env("SOPS_AGE_RECIPIENTS", &public_key)
+                .status()
+                .unwrap_or_else(|e| {
+                    eprintln!("Failed to run sops: {}", e);
+                    process::exit(1);
+                });
+            if !status.success() {
+                process::exit(status.code().unwrap_or(1));
+            }
+        }
+    }
+
     let status = process::Command::new("sops")
         .arg(&path)
         .env("SOPS_AGE_KEY", key.expose_secret())
+        .env("SOPS_AGE_RECIPIENTS", &public_key)
         .env_remove("SOPS_AGE_KEY_FILE")
         .status()
         .unwrap_or_else(|e| {
@@ -144,8 +176,8 @@ fn cmd_config_encrypt() {
         process::exit(1);
     });
 
-    let probe: toml::Value = toml::from_str(&contents).unwrap_or_else(|e| {
-        eprintln!("Invalid TOML: {}", e);
+    let probe: serde_yaml::Value = serde_yaml::from_str(&contents).unwrap_or_else(|e| {
+        eprintln!("Invalid YAML:{}", e);
         process::exit(1);
     });
 
@@ -165,8 +197,9 @@ fn cmd_config_encrypt() {
     });
 
     let status = process::Command::new("sops")
-        .args(["--encrypt", "--age", &public_key, "-i"])
+        .args(["--encrypt", "-i"])
         .arg(&path)
+        .env("SOPS_AGE_RECIPIENTS", &public_key)
         .status()
         .unwrap_or_else(|e| {
             eprintln!("Failed to run sops: {}", e);
@@ -192,8 +225,8 @@ fn cmd_config_decrypt() {
         process::exit(1);
     });
 
-    let probe: toml::Value = toml::from_str(&contents).unwrap_or_else(|e| {
-        eprintln!("Invalid TOML: {}", e);
+    let probe: serde_yaml::Value = serde_yaml::from_str(&contents).unwrap_or_else(|e| {
+        eprintln!("Invalid YAML:{}", e);
         process::exit(1);
     });
 
@@ -237,8 +270,8 @@ fn cmd_config_show() {
         process::exit(1);
     });
 
-    let probe: toml::Value = toml::from_str(&contents).unwrap_or_else(|e| {
-        eprintln!("Invalid TOML: {}", e);
+    let probe: serde_yaml::Value = serde_yaml::from_str(&contents).unwrap_or_else(|e| {
+        eprintln!("Invalid YAML:{}", e);
         process::exit(1);
     });
 
@@ -262,8 +295,8 @@ fn cmd_migrate() {
         process::exit(1);
     });
 
-    let probe: toml::Value = toml::from_str(&contents).unwrap_or_else(|e| {
-        eprintln!("Invalid TOML: {}", e);
+    let probe: serde_yaml::Value = serde_yaml::from_str(&contents).unwrap_or_else(|e| {
+        eprintln!("Invalid YAML:{}", e);
         process::exit(1);
     });
 
@@ -288,8 +321,9 @@ fn cmd_migrate() {
     });
 
     let status = process::Command::new("sops")
-        .args(["--encrypt", "--age", &public_key, "-i"])
+        .args(["--encrypt", "-i"])
         .arg(&path)
+        .env("SOPS_AGE_RECIPIENTS", &public_key)
         .status()
         .unwrap_or_else(|e| {
             eprintln!("Failed to run sops: {}", e);

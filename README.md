@@ -15,7 +15,7 @@ AI coding agents (Claude Code, GitHub Copilot CLI, opencode, etc.) are increasin
 Toolkit provides a set of tools that sit between the agent and the upstream service. Each tool:
 
 1. **Enforces safety boundaries** — read-only by default, with explicit per-connection allowlists for any write or mutating operation. Write detection happens at the tool level, before queries reach the upstream service.
-2. **Hides credentials** — the agent never sees connection strings, passwords, or tokens. Configuration lives in a local file (`~/.config/toolkit/config.toml`) that the agent doesn't read; the tool loads it internally.
+2. **Hides credentials** — the agent never sees connection strings, passwords, or tokens. Configuration lives in a local file (`~/.config/toolkit/config.yaml`) that the agent doesn't read; the tool loads it internally.
 3. **Produces token-efficient output** — compact JSON with no decoration, no verbose metadata envelopes, and sensible default limits. Designed for direct consumption by LLMs.
 4. **Fails safely** — errors are returned as structured JSON (not stack traces), with credentials scrubbed from error messages.
 
@@ -37,15 +37,7 @@ asdf plugin add rust && asdf install
 just install
 
 # Configure a connection
-mkdir -p ~/.config/toolkit
-cat >> ~/.config/toolkit/config.toml << 'EOF'
-[psql.local]
-host     = "localhost"
-port     = 5432
-database = "mydb"
-user     = "readonly"
-password = "secret"
-EOF
+toolkit config edit   # creates ~/.config/toolkit/config.yaml and opens $EDITOR via sops
 
 # Use it
 tkpsql tables

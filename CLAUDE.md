@@ -41,7 +41,7 @@ agents/     # *.agent.md definitions for GitHub Copilot CLI
 ### Common Library (`crates/common`)
 
 All tools share:
-- `load_section::<T>(section: &str) -> T` — loads a section from `~/.config/toolkit/config.toml` (or `TOOLKIT_CONFIG` env var) into a typed struct
+- `load_section::<T>(section: &str) -> T` — loads a section from `~/.config/toolkit/config.yaml` (or `TOOLKIT_CONFIG` env var) into a typed struct
 - `ErrorResponse` — standard JSON error struct
 - `exit_with_error(msg)` — prints `{"error": "..."}` to stdout and exits 1
 
@@ -65,7 +65,7 @@ Each tool defines its own config struct and deserializes its named section. If o
 
 ### Credential Injection
 
-All credentials must live in toolkit's `config.toml` — never in external config files (e.g. `~/.databrickscfg`). When a tool wraps an external CLI, it injects credentials via environment variables at invocation time. This ensures a single file to encrypt and no plaintext credential files for agents to discover. New tools that wrap external CLIs must follow this pattern.
+All credentials must live in toolkit's `config.yaml` — never in external config files (e.g. `~/.databrickscfg`). When a tool wraps an external CLI, it injects credentials via environment variables at invocation time. This ensures a single file to encrypt and no plaintext credential files for agents to discover. New tools that wrap external CLIs must follow this pattern.
 
 ### Output Philosophy
 
@@ -81,22 +81,24 @@ All credentials must live in toolkit's `config.toml` — never in external confi
 
 ## Configuration
 
-All tools share `~/.config/toolkit/config.toml`:
+All tools share `~/.config/toolkit/config.yaml`:
 
-```toml
-[psql.local]
-host = "localhost"
-port = 5432
-database = "mydb"
-user = "readonly"
-password = "secret"
-tls = false
-writable_tables = []
+```yaml
+psql:
+  local:
+    host: localhost
+    port: 5432
+    database: mydb
+    user: readonly
+    password: secret
+    tls: false
+    writable_tables: []
 
-[dbr.dev]
-host = "https://dbc-abc123.cloud.databricks.com"
-token = "dapi..."
-warehouse_id = "abc123"
-allow_job_runs = false
-bundle_target = "dev"
+dbr:
+  dev:
+    host: https://dbc-abc123.cloud.databricks.com
+    token: dapi...
+    warehouse_id: abc123
+    allow_job_runs: false
+    bundle_target: dev
 ```
