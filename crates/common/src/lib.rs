@@ -1,4 +1,5 @@
 pub mod config;
+pub mod key;
 
 use serde::Serialize;
 use std::process;
