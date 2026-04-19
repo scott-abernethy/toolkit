@@ -27,11 +27,15 @@ pub fn is_encrypted(value: &serde_yaml::Value) -> bool {
 /// Decrypt a sops-encrypted config file using the stored age private key.
 /// The key is passed only in the subprocess environment — it never touches disk.
 pub fn decrypt_config(path: &std::path::Path) -> String {
-    use secrecy::ExposeSecret;
-
     let key = crate::key::get_private_key().unwrap_or_else(|e| {
         exit_with_error(format!("Failed to retrieve decryption key: {}", e))
     });
+    decrypt_config_with_key(path, &key)
+}
+
+/// Decrypt a sops-encrypted config file using the provided age private key.
+pub fn decrypt_config_with_key(path: &std::path::Path, key: &secrecy::SecretString) -> String {
+    use secrecy::ExposeSecret;
 
     let output = std::process::Command::new("sops")
         .args(["--decrypt", "--output-type", "yaml"])
@@ -92,16 +96,20 @@ pub fn load_section<T: DeserializeOwned>(section: &str) -> T {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde::Deserialize;
 
     #[test]
     fn test_config_path_env_override() {
+        let _guard = ENV_MUTEX.lock().unwrap();
         std::env::set_var("TOOLKIT_CONFIG", "/tmp/test-toolkit.yaml");
-        assert_eq!(config_path(), PathBuf::from("/tmp/test-toolkit.yaml"));
+        let result = config_path();
         std::env::remove_var("TOOLKIT_CONFIG");
+        assert_eq!(result, PathBuf::from("/tmp/test-toolkit.yaml"));
     }
 
     #[test]
     fn test_config_path_default() {
+        let _guard = ENV_MUTEX.lock().unwrap();
         std::env::remove_var("TOOLKIT_CONFIG");
         let path = config_path();
         assert!(path.ends_with(".config/toolkit/config.yaml"));
@@ -118,5 +126,96 @@ mod tests {
         let val: serde_yaml::Value =
             serde_yaml::from_str("sops:\n  version: \"3.8.0\"\npsql:\n  local:\n    host: ENC[...]").unwrap();
         assert!(is_encrypted(&val));
+    }
+
+    const ENCRYPTED_REGEX: &str = "^(host|database|user|password|token)$";
+
+    /// Mutex to serialise tests that read/write process-global env vars.
+    static ENV_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn sops_encrypt(path: &std::path::Path, public_key: &str) {
+        let status = std::process::Command::new("sops")
+            .args(["--encrypt", "--encrypted-regex", ENCRYPTED_REGEX, "-i"])
+            .arg(path)
+            .env("SOPS_AGE_RECIPIENTS", public_key)
+            .status()
+            .expect("failed to run sops");
+        assert!(status.success(), "sops encrypt failed");
+    }
+
+    #[test]
+    fn test_decrypt_config_with_key() {
+        let (private_key, public_key) = crate::key::generate_keypair();
+        let file = tempfile::NamedTempFile::with_suffix(".yaml").unwrap();
+        std::fs::write(file.path(), "psql:\n  local:\n    host: db.example.com\n    port: 5432\n    password: secret\n").unwrap();
+
+        sops_encrypt(file.path(), &public_key);
+
+        let contents = std::fs::read_to_string(file.path()).unwrap();
+        let probe: serde_yaml::Value = serde_yaml::from_str(&contents).unwrap();
+        assert!(is_encrypted(&probe), "file should be encrypted");
+        // port is not in encrypted_regex — it should be plaintext in the file
+        assert_eq!(probe["psql"]["local"]["port"], serde_yaml::Value::Number(5432.into()));
+
+        let decrypted = decrypt_config_with_key(file.path(), &private_key);
+        let val: serde_yaml::Value = serde_yaml::from_str(&decrypted).unwrap();
+        assert_eq!(val["psql"]["local"]["host"].as_str(), Some("db.example.com"));
+        assert_eq!(val["psql"]["local"]["port"].as_i64(), Some(5432));
+        assert_eq!(val["psql"]["local"]["password"].as_str(), Some("secret"));
+    }
+
+    #[test]
+    fn test_load_section_plaintext() {
+        #[derive(Deserialize)]
+        struct TestConn {
+            host: String,
+            port: u16,
+        }
+
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let file = tempfile::NamedTempFile::with_suffix(".yaml").unwrap();
+        std::fs::write(file.path(), "psql:\n  local:\n    host: localhost\n    port: 5432\n").unwrap();
+        std::env::set_var("TOOLKIT_CONFIG", file.path());
+
+        let configs = load_section::<std::collections::HashMap<String, TestConn>>("psql");
+        std::env::remove_var("TOOLKIT_CONFIG");
+
+        let conn = configs.get("local").expect("local connection not found");
+        assert_eq!(conn.host, "localhost");
+        assert_eq!(conn.port, 5432);
+    }
+
+    /// Tests the full encrypted config path: encrypt with sops, decrypt with
+    /// decrypt_config_with_key, then deserialize — mirrors what load_section does
+    /// at runtime, but with a throwaway key instead of the keychain.
+    #[test]
+    fn test_decrypt_and_deserialize_encrypted_config() {
+        #[derive(Deserialize)]
+        struct TestConn {
+            host: String,
+            port: u16,
+            password: String,
+        }
+
+        let (private_key, public_key) = crate::key::generate_keypair();
+        let file = tempfile::NamedTempFile::with_suffix(".yaml").unwrap();
+        std::fs::write(
+            file.path(),
+            "psql:\n  local:\n    host: db.example.com\n    port: 5432\n    password: secret\n",
+        )
+        .unwrap();
+
+        sops_encrypt(file.path(), &public_key);
+
+        let decrypted = decrypt_config_with_key(file.path(), &private_key);
+        let full: serde_yaml::Value = serde_yaml::from_str(&decrypted).unwrap();
+        let section = full.get("psql").expect("missing psql section");
+        let configs: std::collections::HashMap<String, TestConn> =
+            serde_yaml::from_value(section.clone()).unwrap();
+
+        let conn = configs.get("local").unwrap();
+        assert_eq!(conn.host, "db.example.com");
+        assert_eq!(conn.port, 5432);
+        assert_eq!(conn.password, "secret");
     }
 }

@@ -44,6 +44,10 @@ pub fn get_private_key() -> Result<SecretString, String> {
             Ok(key) => return Ok(secret(key)),
             Err(keyring::Error::NoEntry) => {}
             Err(e) => {
+                let msg = e.to_string().to_lowercase();
+                if msg.contains("cancel") || msg.contains("denied") || msg.contains("not allowed") {
+                    return Err("Keychain access was denied".to_string());
+                }
                 eprintln!("Warning: keychain lookup failed ({}), trying key file", e);
             }
         },

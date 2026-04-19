@@ -7,6 +7,10 @@ use std::process;
 /// If any are present, toolkit refuses to run — agents must not be able to
 /// invoke key/config management commands (e.g. `toolkit config show` would
 /// defeat the entire encryption scheme).
+/// Only encrypt fields that contain credentials. Structure and non-sensitive
+/// values (port, tls, allow_job_runs, etc.) remain readable in the encrypted file.
+const ENCRYPTED_REGEX: &str = "^(host|database|user|password|token)$";
+
 const AGENT_ENV_VARS: &[&str] = &[
     "CLAUDECODE", // Claude Code (claude.ai/code)
     "OPENCODE",   // opencode (sst/opencode)
@@ -128,13 +132,21 @@ fn cmd_config_edit() {
 
     // sops can only edit files it encrypted itself. If an existing plaintext
     // file is present, encrypt it in-place first. New (non-existent) files are
-    // handled by sops directly — it opens the editor and encrypts on save.
+    // seeded with a default template before sops opens the editor.
+    if !path.exists() {
+        let template = "# Toolkit config. Managed by `toolkit config edit`. Sensitive data encrypted.\nencryption: true\n";
+        std::fs::write(&path, template).unwrap_or_else(|e| {
+            eprintln!("Failed to write default config: {}", e);
+            process::exit(1);
+        });
+    }
+
     if path.exists() {
         let contents = std::fs::read_to_string(&path).unwrap_or_default();
         let probe: serde_yaml::Value = serde_yaml::from_str(&contents).unwrap_or(serde_yaml::Value::Null);
         if !config::is_encrypted(&probe) {
             let status = process::Command::new("sops")
-                .args(["--encrypt", "-i"])
+                .args(["--encrypt", "--encrypted-regex", ENCRYPTED_REGEX, "-i"])
                 .arg(&path)
                 .env("SOPS_AGE_RECIPIENTS", &public_key)
                 .status()
@@ -149,6 +161,7 @@ fn cmd_config_edit() {
     }
 
     let status = process::Command::new("sops")
+        .args(["--encrypted-regex", ENCRYPTED_REGEX])
         .arg(&path)
         .env("SOPS_AGE_KEY", key.expose_secret())
         .env("SOPS_AGE_RECIPIENTS", &public_key)
@@ -197,7 +210,7 @@ fn cmd_config_encrypt() {
     });
 
     let status = process::Command::new("sops")
-        .args(["--encrypt", "-i"])
+        .args(["--encrypt", "--encrypted-regex", ENCRYPTED_REGEX, "-i"])
         .arg(&path)
         .env("SOPS_AGE_RECIPIENTS", &public_key)
         .status()
@@ -321,7 +334,7 @@ fn cmd_migrate() {
     });
 
     let status = process::Command::new("sops")
-        .args(["--encrypt", "-i"])
+        .args(["--encrypt", "--encrypted-regex", ENCRYPTED_REGEX, "-i"])
         .arg(&path)
         .env("SOPS_AGE_RECIPIENTS", &public_key)
         .status()
