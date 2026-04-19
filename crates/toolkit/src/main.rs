@@ -41,8 +41,6 @@ enum Commands {
         #[command(subcommand)]
         cmd: ConfigCmd,
     },
-    /// Encrypt a plaintext config.toml in-place (no-op if already encrypted)
-    Migrate,
 }
 
 #[derive(Subcommand)]
@@ -68,7 +66,6 @@ fn main() {
             ConfigCmd::Decrypt => cmd_config_decrypt(),
             ConfigCmd::Show => cmd_config_show(),
         },
-        Commands::Migrate => cmd_migrate(),
     }
 }
 
@@ -97,7 +94,6 @@ fn cmd_init() {
     println!("Public key (age recipient): {}", public_key);
     println!();
     println!("Next steps:");
-    println!("  toolkit migrate                  encrypt an existing plaintext config.toml");
     println!("  toolkit config edit              edit the config via sops + $EDITOR");
     println!();
     println!("Agent harness configuration:");
@@ -296,56 +292,3 @@ fn cmd_config_show() {
     }
 }
 
-fn cmd_migrate() {
-    let path = config::config_path();
-    if !path.exists() {
-        eprintln!("Config not found: {}", path.display());
-        process::exit(1);
-    }
-
-    let contents = std::fs::read_to_string(&path).unwrap_or_else(|e| {
-        eprintln!("Failed to read config: {}", e);
-        process::exit(1);
-    });
-
-    let probe: serde_yaml::Value = serde_yaml::from_str(&contents).unwrap_or_else(|e| {
-        eprintln!("Invalid YAML:{}", e);
-        process::exit(1);
-    });
-
-    if config::is_encrypted(&probe) {
-        println!("Config is already encrypted — nothing to do.");
-        return;
-    }
-
-    // Warn about what will be encrypted
-    println!("Encrypting {} in-place.", path.display());
-    println!("All values will be encrypted. Connection names and structure remain readable.");
-
-    let private_key = key::get_private_key().unwrap_or_else(|e| {
-        eprintln!("Error retrieving key: {}", e);
-        eprintln!("Run `toolkit init` first to generate and store an age key.");
-        process::exit(1);
-    });
-
-    let public_key = key::public_key_from_private(&private_key).unwrap_or_else(|e| {
-        eprintln!("Error deriving public key: {}", e);
-        process::exit(1);
-    });
-
-    let status = process::Command::new("sops")
-        .args(["--encrypt", "--encrypted-regex", ENCRYPTED_REGEX, "-i"])
-        .arg(&path)
-        .env("SOPS_AGE_RECIPIENTS", &public_key)
-        .status()
-        .unwrap_or_else(|e| {
-            eprintln!("Failed to run sops: {}", e);
-            process::exit(1);
-        });
-
-    if !status.success() {
-        process::exit(status.code().unwrap_or(1));
-    }
-
-    println!("Encrypted: {}", path.display());
-}
