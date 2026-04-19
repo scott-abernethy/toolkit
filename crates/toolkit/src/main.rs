@@ -70,19 +70,8 @@ fn main() {
 }
 
 fn cmd_init() {
-    // Generate keypair
     let (private_key, public_key) = key::generate_keypair();
 
-    // Store in OS keychain
-    match key::store_private_key(&private_key) {
-        Ok(()) => println!("Stored age private key in OS keychain (service=toolkit, account=age-identity)"),
-        Err(e) => {
-            eprintln!("Warning: could not store key in keychain: {}", e);
-            eprintln!("The key will only be written to the key file.");
-        }
-    }
-
-    // Write key file for sops CLI / VS Code interop
     match key::write_key_file(&private_key) {
         Ok(path) => println!("Wrote private key to {} (mode 0600)", path.display()),
         Err(e) => {
