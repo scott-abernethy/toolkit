@@ -71,6 +71,11 @@ enum ConfigCmd {
     Decrypt,
     /// Print the decrypted config to stdout
     Show,
+    /// Print a config template for a known app (e.g. psql, dbr)
+    Template {
+        /// App name (psql, dbr)
+        app: String,
+    },
 }
 
 fn main() {
@@ -87,6 +92,7 @@ fn main() {
             ConfigCmd::Encrypt => cmd_config_encrypt(),
             ConfigCmd::Decrypt => cmd_config_decrypt(),
             ConfigCmd::Show => cmd_config_show(),
+            ConfigCmd::Template { app } => cmd_config_template(&app),
         },
         Commands::Install => cmd_install(),
         Commands::Proxy { app, conn, args } => {
@@ -436,5 +442,38 @@ fn cmd_config_show() {
     } else {
         print!("{}", contents);
     }
+}
+
+fn cmd_config_template(app: &str) {
+    let template = match app {
+        "psql" => "\
+psql:
+  conn:
+    host: localhost
+    port: 5432
+    database: mydb
+    user: readonly
+    password: changeme
+    tls: false
+    writable_tables: []
+",
+        "dbr" => "\
+dbr:
+  conn:
+    host: https://dbc-abc123.cloud.databricks.com
+    token: dapi...
+    warehouse_id: abc123
+    allow_job_runs: false
+    bundle_target: dev
+",
+        _ => {
+            eprintln!("Unknown app: {}", app);
+            eprintln!("Known apps: psql, dbr");
+            process::exit(1);
+        }
+    };
+
+    println!("# Add to your config via `toolkit config edit`:");
+    print!("{}", template);
 }
 
