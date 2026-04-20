@@ -69,7 +69,7 @@ Each tool defines its own config struct and deserializes its named section. If o
 - Wraps any CLI with credential injection and command allow/deny rules, configured entirely in YAML
 - New services added via config, not new Rust crates — use for CLIs that already produce usable output
 - Token-based allow/deny rules with `|` alternatives for plurals/aliases (e.g. `"get pod|pods"`)
-- `toolkit install` generates wrapper scripts in `~/.config/toolkit/bin/` named `tk<app>-<conn>`
+- `toolkit install` generates wrapper scripts named `tk<app>-<conn>` into the `install_path` from config (defaults to `$HOME/.local/bin`)
 - Agents interact with wrapper scripts directly (e.g. `tkkubectl-dev get pods`) — no awareness of proxy
 
 ### Credential Injection
@@ -93,6 +93,9 @@ All credentials must live in toolkit's `config.yaml` — never in external confi
 All tools share `~/.config/toolkit/config.yaml`:
 
 ```yaml
+# Top-level settings
+install_path: "$HOME/.local/bin"   # where `toolkit install` writes wrapper scripts
+
 psql:
   local:
     host: localhost

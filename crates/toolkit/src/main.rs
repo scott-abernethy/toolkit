@@ -203,10 +203,13 @@ fn cmd_install() {
         eprintln!("HOME not set");
         process::exit(1);
     });
-    let bin_dir = std::path::PathBuf::from(&home)
-        .join(".config")
-        .join("toolkit")
-        .join("bin");
+
+    let install_path = full
+        .get("install_path")
+        .and_then(|v| v.as_str())
+        .unwrap_or("$HOME/.local/bin");
+    let bin_dir =
+        std::path::PathBuf::from(install_path.replace("$HOME", &home));
 
     std::fs::create_dir_all(&bin_dir).unwrap_or_else(|e| {
         eprintln!("Failed to create {}: {}", bin_dir.display(), e);
@@ -245,7 +248,7 @@ fn cmd_install() {
     println!("Installed {} scripts to {}", installed, bin_dir.display());
     println!();
     println!("Add to your shell profile if not already present:");
-    println!("  export PATH=\"$HOME/.config/toolkit/bin:$PATH\"");
+    println!("  export PATH=\"{}:$PATH\"", install_path);
 }
 
 fn cmd_config_edit() {
@@ -273,7 +276,7 @@ fn cmd_config_edit() {
     // file is present, encrypt it in-place first. New (non-existent) files are
     // seeded with a default template before sops opens the editor.
     if !path.exists() {
-        let template = "# Toolkit config. Managed by `toolkit config edit`. Sensitive data encrypted.\nencryption: true\n";
+        let template = "# Toolkit config. Managed by `toolkit config edit`. Sensitive data encrypted.\ninstall_path: \"$HOME/.local/bin\"\n";
         std::fs::write(&path, template).unwrap_or_else(|e| {
             eprintln!("Failed to write default config: {}", e);
             process::exit(1);

@@ -51,11 +51,19 @@ pub fn read_key_file() -> Result<SecretString, String> {
 }
 
 /// Write the age private key to the standard sops key file with mode 0600.
+/// If an existing key file is present, it is backed up to `keys.txt.bak` first.
 pub fn write_key_file(key: &SecretString) -> Result<PathBuf, String> {
     let path = key_file_path();
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
             .map_err(|e| format!("Failed to create {}: {}", parent.display(), e))?;
+    }
+
+    if path.exists() {
+        let backup = path.with_extension("txt.bak");
+        std::fs::copy(&path, &backup)
+            .map_err(|e| format!("Failed to backup existing key file: {}", e))?;
+        eprintln!("Backed up existing key to {}", backup.display());
     }
 
     use std::io::Write;
