@@ -1821,6 +1821,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "tkproxy"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "common",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "tkpsql"
 version = "0.1.0"
 dependencies = [

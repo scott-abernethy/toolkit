@@ -21,10 +21,69 @@ Toolkit provides a set of tools that sit between the agent and the upstream serv
 
 ## Tools
 
+Toolkit has two kinds of tool: **native clients** that implement protocol-level safety, and a **generic proxy** that wraps any CLI with credential injection and command allow/deny rules.
+
+### Native Clients
+
 | Binary   | Upstream Service | What It Provides |
 |----------|-----------------|------------------|
 | `tkpsql` | PostgreSQL | Query, describe tables, list schemas. Read-only by default; optional per-table write allowlists. |
 | `tkdbr`  | Databricks | Unity Catalog exploration, SQL queries, job/cluster/warehouse inspection, bundle management. Job triggering requires explicit opt-in. |
+
+Native clients earn their complexity — `tkpsql` enforces read-only at the Postgres session level and does type-aware JSON conversion; `tkdbr` compacts verbose Databricks API responses into token-efficient output. These are worth maintaining as dedicated crates because the upstream services need protocol-level handling that a generic wrapper can't provide.
+
+### Generic Proxy (`tkproxy`)
+
+For CLI tools where the main value is credential hiding and command gating — not protocol-level safety or output reshaping — `tkproxy` wraps any CLI with:
+
+- **Credential injection** — env vars from config, never passed as arguments
+- **Command allow/deny rules** — token-based matching with `|` alternatives for plurals/aliases
+- **Raw passthrough** — stdout/stderr forwarded as-is; the wrapped CLI handles its own output format
+
+Adding a new service requires only a config stanza, not a new Rust crate:
+
+```yaml
+kubectl:
+  dev:
+    binary: kubectl
+    env:
+      KUBECONFIG: /path/to/dev.kubeconfig
+    allow:
+      - "get pod|pods"
+      - "get deploy|deployment|deployments"
+      - "describe pod|pods"
+      - "logs"
+    deny:
+      - "secret|secrets"
+      - "exec"
+      - "delete"
+      - "--kubeconfig"
+```
+
+Shell aliases make proxied tools look native to agents:
+
+```sh
+alias tkkubectl="tkproxy --app kubectl"
+# Agent sees: tkkubectl --conn dev -- get pods -o json
+```
+
+**When to use tkproxy vs a native client:** Use `tkproxy` when the upstream CLI already produces usable output (e.g. `kubectl -o json`, `pup --json`) and you just need credential hiding and command gating. Build a native client when you need protocol-level enforcement (session-level read-only), semantic analysis (SQL write detection), or significant output transformation (type-aware JSON conversion).
+
+#### Rule Engine
+
+Rules are space-separated token groups matched with AND semantics. Each group can contain `|`-separated alternatives (OR within the group). A rule matches if every group has at least one alternative present as an exact token in the command args.
+
+```
+Rule: "get pod|pods"
+Args: ["get", "pods", "-o", "json"]
+→ "get" present ✓, "pods" matches "pod|pods" ✓ → MATCH
+
+Rule: "get pod|pods"
+Args: ["get", "deployments"]
+→ "get" present ✓, neither "pod" nor "pods" present ✗ → NO MATCH
+```
+
+Deny rules are checked first. If any deny rule matches, the command is rejected. Then at least one allow rule must match (unless the allow list is empty, which permits all non-denied commands).
 
 ## Quick Start
 
@@ -100,7 +159,7 @@ Toolkit currently ships as CLI tools. This is a deliberate choice informed by th
 - **Cross-system coordination** — workflows spanning databases, Kubernetes, monitoring, and ticketing benefit from session state that CLIs don't naturally maintain.
 - **Discovery** — an agent connecting to a single MCP server learns all available operations, vs. needing to know about each CLI tool independently.
 
-**Current position:** CLI-first, with MCP as a potential future transport layer rather than a replacement. The core logic (safety boundaries, credential hiding, output shaping) lives in library crates that could serve both a CLI and an MCP server. As toolkit expands to more services (Kubernetes, Datadog, Jira, etc.), the balance may shift — but only if MCP implementations can be kept complete enough that agents don't hit capability walls mid-workflow.
+**Current position:** CLI-first, with MCP as a potential future transport layer rather than a replacement. The core logic (safety boundaries, credential hiding, output shaping) lives in library crates that could serve both a CLI and an MCP server. The introduction of `tkproxy` means adding new services no longer requires new Rust crates — only config — so the scaling concern that might push toward MCP is less pressing. MCP remains worth revisiting if centralized auth or cross-system session state become real requirements.
 
 ## Documentation
 

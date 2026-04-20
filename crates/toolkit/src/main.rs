@@ -41,6 +41,8 @@ enum Commands {
         #[command(subcommand)]
         cmd: ConfigCmd,
     },
+    /// Generate wrapper scripts for tkproxy apps in ~/.config/toolkit/bin
+    Install,
 }
 
 #[derive(Subcommand)]
@@ -66,6 +68,7 @@ fn main() {
             ConfigCmd::Decrypt => cmd_config_decrypt(),
             ConfigCmd::Show => cmd_config_show(),
         },
+        Commands::Install => cmd_install(),
     }
 }
 
@@ -92,6 +95,131 @@ fn cmd_init() {
     println!();
     println!("  Claude Code (~/.claude/settings.json):");
     println!("    {{\"permissions\": {{\"deny\": [\"Bash(toolkit:*)\"]}}}}");
+}
+
+fn cmd_install() {
+    let path = config::config_path();
+    if !path.exists() {
+        eprintln!("Config not found: {}", path.display());
+        eprintln!("Run `toolkit init` first, then `toolkit config edit` to add connections.");
+        process::exit(1);
+    }
+
+    let contents = std::fs::read_to_string(&path).unwrap_or_else(|e| {
+        eprintln!("Failed to read config: {}", e);
+        process::exit(1);
+    });
+
+    let probe: serde_yaml::Value = serde_yaml::from_str(&contents).unwrap_or_else(|e| {
+        eprintln!("Invalid YAML: {}", e);
+        process::exit(1);
+    });
+
+    let full: serde_yaml::Value = if config::is_encrypted(&probe) {
+        let decrypted = config::decrypt_config(&path);
+        serde_yaml::from_str(&decrypted).unwrap_or_else(|e| {
+            eprintln!("Invalid decrypted config: {}", e);
+            process::exit(1);
+        })
+    } else {
+        probe
+    };
+
+    let mapping = match full.as_mapping() {
+        Some(m) => m,
+        None => {
+            eprintln!("Config is not a YAML mapping");
+            process::exit(1);
+        }
+    };
+
+    // Discover tkproxy apps: top-level sections where any connection has a "binary" field.
+    let mut scripts: Vec<(String, String, String)> = Vec::new(); // (name, app, conn)
+    for (section_key, section_val) in mapping {
+        let app = match section_key.as_str() {
+            Some(s) => s,
+            None => continue,
+        };
+        let conns = match section_val.as_mapping() {
+            Some(m) => m,
+            None => continue,
+        };
+        for (conn_key, conn_val) in conns {
+            let conn = match conn_key.as_str() {
+                Some(s) => s,
+                None => continue,
+            };
+            // A tkproxy connection has a "binary" field
+            if conn_val.get("binary").and_then(|v| v.as_str()).is_some() {
+                let name = format!("tk{}-{}", app, conn);
+                scripts.push((name, app.to_string(), conn.to_string()));
+            }
+        }
+    }
+
+    if scripts.is_empty() {
+        println!("No tkproxy apps found in config.");
+        println!("tkproxy app connections have a 'binary' field. Example:");
+        println!();
+        println!("  kubectl:");
+        println!("    dev:");
+        println!("      binary: kubectl");
+        println!("      env:");
+        println!("        KUBECONFIG: /path/to/kubeconfig");
+        println!("      allow:");
+        println!("        - \"get pod|pods\"");
+        println!("      deny:");
+        println!("        - \"secret|secrets\"");
+        return;
+    }
+
+    let home = std::env::var("HOME").unwrap_or_else(|_| {
+        eprintln!("HOME not set");
+        process::exit(1);
+    });
+    let bin_dir = std::path::PathBuf::from(&home)
+        .join(".config")
+        .join("toolkit")
+        .join("bin");
+
+    std::fs::create_dir_all(&bin_dir).unwrap_or_else(|e| {
+        eprintln!("Failed to create {}: {}", bin_dir.display(), e);
+        process::exit(1);
+    });
+
+    let mut installed = 0;
+    for (name, app, conn) in &scripts {
+        let script_path = bin_dir.join(name);
+        let script = format!(
+            "#!/bin/sh\nexec tkproxy --app {} --conn {} -- \"$@\"\n",
+            app, conn
+        );
+
+        if let Err(e) = std::fs::write(&script_path, &script) {
+            eprintln!("Failed to write {}: {}", script_path.display(), e);
+            continue;
+        }
+
+        // chmod +x
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let perms = std::fs::Permissions::from_mode(0o755);
+            if let Err(e) = std::fs::set_permissions(&script_path, perms) {
+                eprintln!("Failed to chmod {}: {}", script_path.display(), e);
+                continue;
+            }
+        }
+
+        println!("  {}", name);
+        installed += 1;
+    }
+
+    println!();
+    println!("Installed {} scripts to {}", installed, bin_dir.display());
+    println!();
+    println!("Add to your shell profile if not already present:");
+    println!("  export PATH=\"$HOME/.config/toolkit/bin:$PATH\"");
 }
 
 fn cmd_config_edit() {
