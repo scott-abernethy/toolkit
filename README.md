@@ -32,9 +32,9 @@ Toolkit has two kinds of tool: **native clients** that implement protocol-level 
 
 Native clients earn their complexity — `tkpsql` enforces read-only at the Postgres session level and does type-aware JSON conversion; `tkdbr` compacts verbose Databricks API responses into token-efficient output. These are worth maintaining as dedicated crates because the upstream services need protocol-level handling that a generic wrapper can't provide.
 
-### Generic Proxy (`tkproxy`)
+### Generic Proxy (`toolkit proxy`)
 
-For CLI tools where the main value is credential hiding and command gating — not protocol-level safety or output reshaping — `tkproxy` wraps any CLI with:
+For CLI tools where the main value is credential hiding and command gating — not protocol-level safety or output reshaping — `toolkit proxy` wraps any CLI with:
 
 - **Credential injection** — env vars from config, never passed as arguments
 - **Command allow/deny rules** — token-based matching with `|` alternatives for plurals/aliases
@@ -60,14 +60,17 @@ kubectl:
       - "--kubeconfig"
 ```
 
-Shell aliases make proxied tools look native to agents:
+`toolkit install` generates wrapper scripts so agents interact with proxied tools naturally:
 
 ```sh
-alias tkkubectl="tkproxy --app kubectl"
-# Agent sees: tkkubectl --conn dev -- get pods -o json
+toolkit install
+# Generates ~/.config/toolkit/bin/tkkubectl-dev
+
+# Agent just runs:
+tkkubectl-dev get pods -o json
 ```
 
-**When to use tkproxy vs a native client:** Use `tkproxy` when the upstream CLI already produces usable output (e.g. `kubectl -o json`, `pup --json`) and you just need credential hiding and command gating. Build a native client when you need protocol-level enforcement (session-level read-only), semantic analysis (SQL write detection), or significant output transformation (type-aware JSON conversion).
+**When to use the proxy vs a native client:** Use `toolkit proxy` when the upstream CLI already produces usable output (e.g. `kubectl -o json`, `pup --json`) and you just need credential hiding and command gating. Build a native client when you need protocol-level enforcement (session-level read-only), semantic analysis (SQL write detection), or significant output transformation (type-aware JSON conversion).
 
 #### Rule Engine
 

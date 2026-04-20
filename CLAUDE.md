@@ -34,6 +34,7 @@ crates/
   common/   # shared library: config loading, error handling
   psql/     # tkpsql binary — PostgreSQL query tool
   dbr/      # tkdbr binary — Databricks CLI wrapper
+  toolkit/  # toolkit binary — key/config management + generic CLI proxy
 skills/     # SKILL.md definitions for opencode integration
 agents/     # *.agent.md definitions for GitHub Copilot CLI
 ```
@@ -62,6 +63,14 @@ Each tool defines its own config struct and deserializes its named section. If o
 - Bundle operations: `validate`, `deploy`, `run`
 - Commands: `catalogs`, `schemas`, `tables`, `jobs`, `runs`, `clusters`, `warehouses`, `bundle`, `query`
 - Output includes sensible defaults (e.g., `--limit 25` for jobs, `--limit 100` for queries)
+
+### `toolkit proxy` (Generic CLI Proxy)
+
+- Wraps any CLI with credential injection and command allow/deny rules, configured entirely in YAML
+- New services added via config, not new Rust crates — use for CLIs that already produce usable output
+- Token-based allow/deny rules with `|` alternatives for plurals/aliases (e.g. `"get pod|pods"`)
+- `toolkit install` generates wrapper scripts in `~/.config/toolkit/bin/` named `tk<app>-<conn>`
+- Agents interact with wrapper scripts directly (e.g. `tkkubectl-dev get pods`) — no awareness of proxy
 
 ### Credential Injection
 

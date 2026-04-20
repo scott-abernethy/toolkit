@@ -1,3 +1,5 @@
+mod proxy;
+
 use clap::{Parser, Subcommand};
 use common::{config, key};
 use secrecy::ExposeSecret;
@@ -41,8 +43,22 @@ enum Commands {
         #[command(subcommand)]
         cmd: ConfigCmd,
     },
-    /// Generate wrapper scripts for tkproxy apps in ~/.config/toolkit/bin
+    /// Generate wrapper scripts for proxy apps in ~/.config/toolkit/bin
     Install,
+    /// Run a CLI through the proxy firewall (used by generated wrapper scripts)
+    Proxy {
+        /// App name — matches config section (e.g. kubectl, pup)
+        #[arg(long)]
+        app: String,
+
+        /// Named connection from config. Required if multiple connections exist.
+        #[arg(long)]
+        conn: Option<String>,
+
+        /// Arguments to pass to the wrapped CLI (after --)
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true, last = true)]
+        args: Vec<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -58,8 +74,12 @@ enum ConfigCmd {
 }
 
 fn main() {
-    reject_if_agent();
     let cli = Cli::parse();
+    // Proxy is invoked by generated wrapper scripts in agent context — allow it.
+    // All other commands (init, config, install) must be blocked for agents.
+    if !matches!(cli.command, Commands::Proxy { .. }) {
+        reject_if_agent();
+    }
     match cli.command {
         Commands::Init => cmd_init(),
         Commands::Config { cmd } => match cmd {
@@ -69,6 +89,12 @@ fn main() {
             ConfigCmd::Show => cmd_config_show(),
         },
         Commands::Install => cmd_install(),
+        Commands::Proxy { app, conn, args } => {
+            let config = proxy::load_config(&app, conn.as_deref());
+            let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+            proxy::check_rules(&config, &arg_refs);
+            proxy::run(&config, &args);
+        }
     }
 }
 
@@ -191,7 +217,7 @@ fn cmd_install() {
     for (name, app, conn) in &scripts {
         let script_path = bin_dir.join(name);
         let script = format!(
-            "#!/bin/sh\nexec tkproxy --app {} --conn {} -- \"$@\"\n",
+            "#!/bin/sh\nexec toolkit proxy --app {} --conn {} -- \"$@\"\n",
             app, conn
         );
 
