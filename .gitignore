@@ -1,1 +1,11 @@
 /target
+
+# Secrets and credentials
+*.pem
+*.key
+*.age
+*.env
+.env*
+config.yaml
+credentials*
+*.secret

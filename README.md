@@ -141,7 +141,7 @@ Toolkit occupies a gap in the current ecosystem. Existing approaches each solve 
 **What's missing everywhere:**
 
 - **Credential hiding as a first-class feature.** [Research by Knostic](https://www.knostic.ai/blog/claude-cursor-env-file-secret-leakage) documented coding agents silently loading `.env` files and leaking API keys. The industry consensus is to treat agents as untrusted processes, but almost nobody ships tooling for it.
-- **Token-efficient output.** No existing tool treats context window cost as a design constraint. Verbose API responses are the norm.
+- **Token-efficient output.** Verbose API responses are the norm. Inspiration for this came from [rtk](https://github.com/rtk-ai/rtk).
 - **Semantic write detection.** Every existing solution uses basic statement-type filtering (reject anything that isn't SELECT). Nobody detects writes inside CTEs, function calls with side effects, or schema-qualified edge cases.
 - **Protocol independence.** MCP servers only work with MCP-compatible hosts. CLI tools work with any agent harness that can shell out.
 

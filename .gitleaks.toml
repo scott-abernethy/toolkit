@@ -1,0 +1,16 @@
+title = "toolkit gitleaks config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Allow placeholder values in examples and templates"
+paths = [
+    '''docs/configuration\.md''',
+]
+regexTarget = "line"
+regexes = [
+    '''changeme''',
+    '''dapi\.\.\.''',
+    '''dbc-abc123''',
+]

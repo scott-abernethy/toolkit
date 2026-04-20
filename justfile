@@ -2,6 +2,12 @@
 default:
     @just --list
 
+# Set up local dev environment (git hooks, etc.)
+setup:
+    git config core.hooksPath .githooks
+    @echo "Git hooks configured."
+    @command -v gitleaks >/dev/null || echo "Install gitleaks for pre-commit secret scanning: brew install gitleaks"
+
 # Install all tools to ~/.cargo/bin
 install:
     for crate in crates/*/; do cargo install --path "$crate" --root ~/.cargo; done

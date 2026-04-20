@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if command -v gitleaks &>/dev/null; then
+    gitleaks protect --staged --verbose
+else
+    echo "WARNING: gitleaks not installed — skipping secret scan"
+    echo "Install with: brew install gitleaks"
+fi
