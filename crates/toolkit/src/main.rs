@@ -55,6 +55,10 @@ enum Commands {
         #[arg(long)]
         conn: Option<String>,
 
+        /// Print guard overhead timing to stderr
+        #[arg(long)]
+        debug: bool,
+
         /// Arguments to pass to the wrapped CLI (after --)
         #[arg(trailing_var_arg = true, allow_hyphen_values = true, last = true)]
         args: Vec<String>,
@@ -80,8 +84,27 @@ enum ConfigCmd {
     Migrate,
 }
 
+fn is_agent() -> bool {
+    AGENT_ENV_VARS.iter().any(|var| std::env::var(var).is_ok())
+}
+
 fn main() {
-    let cli = Cli::parse();
+    let start = std::time::Instant::now();
+
+    // When running under an agent, use try_parse so that missing/invalid
+    // subcommands produce "Not Allowed" instead of clap help text.
+    let cli = if is_agent() {
+        match Cli::try_parse() {
+            Ok(cli) => cli,
+            Err(_) => {
+                eprintln!("Not Allowed");
+                process::exit(1);
+            }
+        }
+    } else {
+        Cli::parse()
+    };
+
     // Guard is invoked by generated wrapper scripts in agent context — allow it.
     // All other commands (init, config, install) must be blocked for agents.
     if !matches!(cli.command, Commands::Guard { .. }) {
@@ -98,10 +121,14 @@ fn main() {
             ConfigCmd::Migrate => cmd_config_migrate(),
         },
         Commands::Install => cmd_install(),
-        Commands::Guard { app, conn, args } => {
+        Commands::Guard { app, conn, debug, args } => {
             let config = guard::load_config(&app, conn.as_deref());
             let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
             guard::check_rules(&config, &arg_refs);
+            if debug {
+                let elapsed = start.elapsed();
+                eprintln!("[guard] overhead: {:.1}ms", elapsed.as_secs_f64() * 1000.0);
+            }
             guard::run(&config, &args);
         }
     }
