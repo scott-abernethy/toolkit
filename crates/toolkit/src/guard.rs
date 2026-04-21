@@ -105,7 +105,7 @@ pub fn run(config: &ConnConfig, args: &[String]) -> ! {
 
     cmd.args(args);
 
-    let output = cmd.output().unwrap_or_else(|e| {
+    let status = cmd.status().unwrap_or_else(|e| {
         let msg = e.to_string().to_lowercase();
         if msg.contains("not found") || msg.contains("no such file") {
             exit_with_error(format!("binary not found: {}", config.binary))
@@ -116,13 +116,7 @@ pub fn run(config: &ConnConfig, args: &[String]) -> ! {
         }
     });
 
-    // Raw passthrough: forward stdout and stderr as-is
-    use std::io::Write;
-    let _ = std::io::stdout().write_all(&output.stdout);
-    let _ = std::io::stderr().write_all(&output.stderr);
-
-    let code = output.status.code().unwrap_or(1);
-    std::process::exit(code)
+    std::process::exit(status.code().unwrap_or(1))
 }
 
 // ---------------------------------------------------------------------------
