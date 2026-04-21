@@ -12,16 +12,15 @@ use std::time::Duration;
 
 #[derive(Deserialize)]
 pub struct ConnConfig {
-    /// Databricks workspace host (e.g. "https://dbc-abc123.cloud.databricks.com")
-    pub host: String,
-    /// Databricks personal access token
-    pub token: String,
+    /// Environment variables to inject when running the Databricks CLI.
+    /// Expected keys: DATABRICKS_HOST, DATABRICKS_TOKEN (or other auth vars),
+    /// and optionally DATABRICKS_WAREHOUSE_ID.
+    #[serde(default)]
+    pub env: HashMap<String, String>,
     /// Allow triggering job runs via `jobs trigger` (default: false)
     pub allow_job_runs: Option<bool>,
     /// Bundle target for bundle commands (e.g. "local", "dev", "prod")
     pub bundle_target: Option<String>,
-    /// Default SQL warehouse ID for query commands
-    pub warehouse_id: Option<String>,
 }
 
 impl ConnConfig {
@@ -33,6 +32,10 @@ impl ConnConfig {
         self.bundle_target
             .clone()
             .unwrap_or_else(|| "local".to_string())
+    }
+
+    pub fn warehouse_id(&self) -> Option<&str> {
+        self.env.get("DATABRICKS_WAREHOUSE_ID").map(|s| s.as_str())
     }
 }
 
@@ -85,8 +88,7 @@ fn run_databricks(config: &ConnConfig, args: &[&str]) -> Value {
     cmd.args(args);
 
     // Inject credentials via env vars — no external config files needed
-    cmd.env("DATABRICKS_HOST", &config.host);
-    cmd.env("DATABRICKS_TOKEN", &config.token);
+    cmd.envs(&config.env);
 
     let output = cmd
         .output()
@@ -117,8 +119,7 @@ fn run_databricks_no_json(config: &ConnConfig, args: &[&str]) -> (String, String
     cmd.args(args);
 
     // Inject credentials via env vars — no external config files needed
-    cmd.env("DATABRICKS_HOST", &config.host);
-    cmd.env("DATABRICKS_TOKEN", &config.token);
+    cmd.envs(&config.env);
 
     let output = cmd
         .output()
@@ -150,8 +151,7 @@ fn run_databricks_api_post(config: &ConnConfig, path: &str, body: &Value) -> Val
     cmd.args(["api", "post", path, "--json", &body_str]);
 
     // Inject credentials via env vars — no external config files needed
-    cmd.env("DATABRICKS_HOST", &config.host);
-    cmd.env("DATABRICKS_TOKEN", &config.token);
+    cmd.envs(&config.env);
 
     let output = cmd
         .output()
@@ -179,8 +179,7 @@ fn run_databricks_api_get(config: &ConnConfig, path: &str) -> Value {
     cmd.args(["api", "get", path]);
 
     // Inject credentials via env vars — no external config files needed
-    cmd.env("DATABRICKS_HOST", &config.host);
-    cmd.env("DATABRICKS_TOKEN", &config.token);
+    cmd.envs(&config.env);
 
     let output = cmd
         .output()
@@ -823,9 +822,9 @@ const QUERY_POLL_INTERVAL: Duration = Duration::from_secs(2);
 /// Uses `databricks api post /api/2.0/sql/statements` to submit, then polls if needed.
 pub fn query(config: &ConnConfig, sql: &str, warehouse_id: Option<&str>, limit: u32) {
     let wh_id = warehouse_id
-        .or(config.warehouse_id.as_deref())
+        .or(config.warehouse_id())
         .unwrap_or_else(|| {
-            exit_with_error("no warehouse_id: pass --warehouse-id or set warehouse_id in config")
+            exit_with_error("no warehouse_id: pass --warehouse-id or set DATABRICKS_WAREHOUSE_ID in config env")
         });
 
     // Apply LIMIT to the SQL if the user hasn't already included one

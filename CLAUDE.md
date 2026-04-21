@@ -108,9 +108,11 @@ psql:
 
 dbr:
   dev:
-    host: https://dbc-abc123.cloud.databricks.com
-    token: dapi...
-    warehouse_id: abc123
+    env:
+      DATABRICKS_HOST: https://dbc-abc123.cloud.databricks.com
+      DATABRICKS_AUTH_TYPE: pat
+      DATABRICKS_TOKEN: dapi...
+      DATABRICKS_WAREHOUSE_ID: abc123
     allow_job_runs: false
     bundle_target: dev
 ```
