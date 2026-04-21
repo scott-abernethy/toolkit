@@ -11,7 +11,7 @@ use std::process;
 /// defeat the entire encryption scheme).
 /// Only encrypt fields that contain credentials. Structure and non-sensitive
 /// values (port, tls, allow_job_runs, etc.) remain readable in the encrypted file.
-const ENCRYPTED_REGEX: &str = "^(host|database|user|password|token)$";
+const ENCRYPTED_REGEX: &str = "^(host|database|user|password|token|DATABRICKS_HOST|DATABRICKS_TOKEN|DATABRICKS_ACCOUNT_ID)$";
 
 const AGENT_ENV_VARS: &[&str] = &[
     "CLAUDECODE", // Claude Code (claude.ai/code)
@@ -76,6 +76,8 @@ enum ConfigCmd {
         /// App name (psql, dbr)
         app: String,
     },
+    /// Re-encrypt config with the current encrypted-regex (run after toolkit upgrade)
+    Migrate,
 }
 
 fn main() {
@@ -93,6 +95,7 @@ fn main() {
             ConfigCmd::Decrypt => cmd_config_decrypt(),
             ConfigCmd::Show => cmd_config_show(),
             ConfigCmd::Template { app } => cmd_config_template(&app),
+            ConfigCmd::Migrate => cmd_config_migrate(),
         },
         Commands::Install => cmd_install(),
         Commands::Guard { app, conn, args } => {
@@ -419,6 +422,71 @@ fn cmd_config_decrypt() {
     println!("Decrypted: {}", path.display());
 }
 
+fn cmd_config_migrate() {
+    let path = config::config_path();
+    if !path.exists() {
+        eprintln!("Config not found: {}", path.display());
+        process::exit(1);
+    }
+
+    let contents = std::fs::read_to_string(&path).unwrap_or_else(|e| {
+        eprintln!("Failed to read config: {}", e);
+        process::exit(1);
+    });
+
+    let probe: serde_yaml::Value = serde_yaml::from_str(&contents).unwrap_or_else(|e| {
+        eprintln!("Invalid YAML: {}", e);
+        process::exit(1);
+    });
+
+    if !config::is_encrypted(&probe) {
+        eprintln!("Config is not encrypted — nothing to migrate.");
+        process::exit(1);
+    }
+
+    let key = key::get_private_key().unwrap_or_else(|e| {
+        eprintln!("Error retrieving key: {}", e);
+        process::exit(1);
+    });
+
+    let public_key = key::public_key_from_private(&key).unwrap_or_else(|e| {
+        eprintln!("Error deriving public key: {}", e);
+        process::exit(1);
+    });
+
+    // Decrypt in-place
+    let status = process::Command::new("sops")
+        .args(["--decrypt", "-i"])
+        .arg(&path)
+        .env("SOPS_AGE_KEY", key.expose_secret())
+        .env_remove("SOPS_AGE_KEY_FILE")
+        .status()
+        .unwrap_or_else(|e| {
+            eprintln!("Failed to run sops: {}", e);
+            process::exit(1);
+        });
+    if !status.success() {
+        process::exit(status.code().unwrap_or(1));
+    }
+
+    // Re-encrypt with current ENCRYPTED_REGEX
+    let status = process::Command::new("sops")
+        .args(["--encrypt", "--encrypted-regex", ENCRYPTED_REGEX, "-i"])
+        .arg(&path)
+        .env("SOPS_AGE_RECIPIENTS", &public_key)
+        .status()
+        .unwrap_or_else(|e| {
+            eprintln!("Failed to run sops: {}", e);
+            process::exit(1);
+        });
+    if !status.success() {
+        process::exit(status.code().unwrap_or(1));
+    }
+
+    println!("Migrated: {}", path.display());
+    println!("Encrypted fields: {}", ENCRYPTED_REGEX);
+}
+
 fn cmd_config_show() {
     let path = config::config_path();
     if !path.exists() {
@@ -459,12 +527,18 @@ psql:
 ",
         "dbr" => "\
 dbr:
-  conn:
-    host: https://dbc-abc123.cloud.databricks.com
-    token: dapi...
-    warehouse_id: abc123
-    allow_job_runs: false
-    bundle_target: dev
+  dev:
+    binary: databricks
+    env:
+      DATABRICKS_HOST: https://dbc-abc123.cloud.databricks.com
+      DATABRICKS_AUTH_TYPE: external-browser
+      DATABRICKS_ACCOUNT_ID: 00000000-0000-0000-0000-000000000000
+      DATABRICKS_WAREHOUSE_ID: abc1234567890abcdef
+      # Token-based auth (alternative to external-browser):
+      # DATABRICKS_AUTH_TYPE: pat
+      # DATABRICKS_TOKEN: dapi...
+    allow: []
+    deny: []
 ",
         _ => {
             eprintln!("Unknown app: {}", app);
