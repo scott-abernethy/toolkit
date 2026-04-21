@@ -5,21 +5,53 @@ use common::{config, key};
 use secrecy::ExposeSecret;
 use std::process;
 
-/// Environment variables set by known AI agent harnesses.
-/// If any are present, toolkit refuses to run — agents must not be able to
-/// invoke key/config management commands (e.g. `toolkit config show` would
-/// defeat the entire encryption scheme).
 /// Only encrypt fields that contain credentials. Structure and non-sensitive
 /// values (port, tls, allow_job_runs, etc.) remain readable in the encrypted file.
 const ENCRYPTED_REGEX: &str = "^(host|database|user|password|token|DATABRICKS_HOST|DATABRICKS_TOKEN|DATABRICKS_ACCOUNT_ID)$";
 
-const AGENT_ENV_VARS: &[&str] = &[
-    "CLAUDECODE", // Claude Code (claude.ai/code)
-    "OPENCODE",   // opencode (sst/opencode)
+/// Default environment variables set by known AI agent harnesses.
+/// If any are present, toolkit refuses to run — agents must not be able to
+/// invoke key/config management commands (e.g. `toolkit config show` would
+/// defeat the entire encryption scheme).
+/// These can be overridden via the `harness_detection.env` config section.
+const DEFAULT_AGENT_ENV_VARS: &[&str] = &[
+    "CLAUDECODE",      // Claude Code (claude.ai/code)
+    "OPENCODE",        // opencode (sst/opencode)
+    "COPILOT_CLI",     // GitHub Copilot CLI
+    "COPILOT_RUN_APP", // GitHub Copilot CLI (run app context)
 ];
 
+/// Load harness env var names from config, falling back to compiled defaults.
+/// Since these names are not sensitive, they remain plaintext even in encrypted
+/// configs — no decryption needed.
+fn load_agent_env_vars() -> Vec<String> {
+    let path = config::config_path();
+    if !path.exists() {
+        return DEFAULT_AGENT_ENV_VARS.iter().map(|s| s.to_string()).collect();
+    }
+    let contents = match std::fs::read_to_string(&path) {
+        Ok(c) => c,
+        Err(_) => return DEFAULT_AGENT_ENV_VARS.iter().map(|s| s.to_string()).collect(),
+    };
+    let value: serde_yaml::Value = match serde_yaml::from_str(&contents) {
+        Ok(v) => v,
+        Err(_) => return DEFAULT_AGENT_ENV_VARS.iter().map(|s| s.to_string()).collect(),
+    };
+    match value
+        .get("harness_detection")
+        .and_then(|h| h.get("env"))
+        .and_then(|e| e.as_sequence())
+    {
+        Some(seq) => seq
+            .iter()
+            .filter_map(|v| v.as_str().map(|s| s.to_string()))
+            .collect(),
+        None => DEFAULT_AGENT_ENV_VARS.iter().map(|s| s.to_string()).collect(),
+    }
+}
+
 fn reject_if_agent() {
-    for var in AGENT_ENV_VARS {
+    for var in &load_agent_env_vars() {
         if std::env::var(var).is_ok() {
             eprintln!("Not Allowed");
             process::exit(1);
@@ -85,7 +117,7 @@ enum ConfigCmd {
 }
 
 fn is_agent() -> bool {
-    AGENT_ENV_VARS.iter().any(|var| std::env::var(var).is_ok())
+    load_agent_env_vars().iter().any(|var| std::env::var(var).is_ok())
 }
 
 fn main() {
@@ -151,9 +183,10 @@ fn cmd_init() {
     println!("  toolkit config edit              edit the config via sops + $EDITOR");
     println!();
     println!("Agent harness configuration:");
-    println!("  toolkit blocks known agent env vars (CLAUDECODE, OPENCODE) at runtime.");
-    println!("  GitHub Copilot CLI does not set such a variable — add an explicit deny");
-    println!("  rule in your harness settings to cover it:");
+    println!("  toolkit blocks known agent env vars at runtime.");
+    println!("  Defaults: CLAUDECODE, OPENCODE, COPILOT_CLI, COPILOT_RUN_APP");
+    println!("  Customize via harness_detection.env in config.yaml.");
+    println!("  You may also want to add an explicit deny rule in your harness settings:");
     println!();
     println!("  Claude Code (~/.claude/settings.json):");
     println!("    {{\"permissions\": {{\"deny\": [\"Bash(toolkit:*)\"]}}}}");
@@ -312,7 +345,7 @@ fn cmd_config_edit() {
     // file is present, encrypt it in-place first. New (non-existent) files are
     // seeded with a default template before sops opens the editor.
     if !path.exists() {
-        let template = "# Toolkit config. Managed by `toolkit config edit`. Sensitive data encrypted.\ninstall_path: \"$HOME/.local/bin\"\n";
+        let template = "# Toolkit config. Managed by `toolkit config edit`. Sensitive data encrypted.\ninstall_path: \"$HOME/.local/bin\"\n\nharness_detection:\n  env:\n    - CLAUDECODE\n    - OPENCODE\n    - COPILOT_CLI\n    - COPILOT_RUN_APP\n";
         std::fs::write(&path, template).unwrap_or_else(|e| {
             eprintln!("Failed to write default config: {}", e);
             process::exit(1);
