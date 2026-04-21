@@ -50,11 +50,15 @@ fn load_agent_env_vars() -> Vec<String> {
     }
 }
 
+fn not_permitted() -> ! {
+    eprintln!("Not permitted");
+    process::exit(77);
+}
+
 fn reject_if_agent() {
     for var in &load_agent_env_vars() {
         if std::env::var(var).is_ok() {
-            eprintln!("Not Allowed");
-            process::exit(1);
+            not_permitted();
         }
     }
 }
@@ -124,14 +128,11 @@ fn main() {
     let start = std::time::Instant::now();
 
     // When running under an agent, use try_parse so that missing/invalid
-    // subcommands produce "Not Allowed" instead of clap help text.
+    // subcommands produce "Not permitted" instead of clap help text.
     let cli = if is_agent() {
         match Cli::try_parse() {
             Ok(cli) => cli,
-            Err(_) => {
-                eprintln!("Not Allowed");
-                process::exit(1);
-            }
+            Err(_) => not_permitted(),
         }
     } else {
         Cli::parse()
