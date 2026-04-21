@@ -1,4 +1,4 @@
-mod proxy;
+mod guard;
 
 use clap::{Parser, Subcommand};
 use common::{config, key};
@@ -43,10 +43,10 @@ enum Commands {
         #[command(subcommand)]
         cmd: ConfigCmd,
     },
-    /// Generate wrapper scripts for proxy apps in ~/.config/toolkit/bin
+    /// Generate guarded wrapper scripts in ~/.config/toolkit/bin
     Install,
-    /// Run a CLI through the proxy firewall (used by generated wrapper scripts)
-    Proxy {
+    /// Run a CLI through the toolkit guard (used by generated wrapper scripts)
+    Guard {
         /// App name — matches config section (e.g. kubectl, pup)
         #[arg(long)]
         app: String,
@@ -80,9 +80,9 @@ enum ConfigCmd {
 
 fn main() {
     let cli = Cli::parse();
-    // Proxy is invoked by generated wrapper scripts in agent context — allow it.
+    // Guard is invoked by generated wrapper scripts in agent context — allow it.
     // All other commands (init, config, install) must be blocked for agents.
-    if !matches!(cli.command, Commands::Proxy { .. }) {
+    if !matches!(cli.command, Commands::Guard { .. }) {
         reject_if_agent();
     }
     match cli.command {
@@ -95,11 +95,11 @@ fn main() {
             ConfigCmd::Template { app } => cmd_config_template(&app),
         },
         Commands::Install => cmd_install(),
-        Commands::Proxy { app, conn, args } => {
-            let config = proxy::load_config(&app, conn.as_deref());
+        Commands::Guard { app, conn, args } => {
+            let config = guard::load_config(&app, conn.as_deref());
             let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-            proxy::check_rules(&config, &arg_refs);
-            proxy::run(&config, &args);
+            guard::check_rules(&config, &arg_refs);
+            guard::run(&config, &args);
         }
     }
 }
@@ -165,7 +165,7 @@ fn cmd_install() {
         }
     };
 
-    // Discover tkproxy apps: top-level sections where any connection has a "binary" field.
+    // Discover guarded apps: top-level sections where any connection has a "binary" field.
     let mut scripts: Vec<(String, String, String)> = Vec::new(); // (name, app, conn)
     for (section_key, section_val) in mapping {
         let app = match section_key.as_str() {
@@ -181,7 +181,7 @@ fn cmd_install() {
                 Some(s) => s,
                 None => continue,
             };
-            // A tkproxy connection has a "binary" field
+            // A guarded connection has a "binary" field
             if conn_val.get("binary").and_then(|v| v.as_str()).is_some() {
                 let name = format!("tk{}-{}", app, conn);
                 scripts.push((name, app.to_string(), conn.to_string()));
@@ -190,8 +190,8 @@ fn cmd_install() {
     }
 
     if scripts.is_empty() {
-        println!("No tkproxy apps found in config.");
-        println!("tkproxy app connections have a 'binary' field. Example:");
+        println!("No guarded apps found in config.");
+        println!("Guarded app connections have a 'binary' field. Example:");
         println!();
         println!("  kubectl:");
         println!("    dev:");
@@ -226,7 +226,7 @@ fn cmd_install() {
     for (name, app, conn) in &scripts {
         let script_path = bin_dir.join(name);
         let script = format!(
-            "#!/bin/sh\nexec toolkit proxy --app {} --conn {} -- \"$@\"\n",
+            "#!/bin/sh\nexec toolkit guard --app {} --conn {} -- \"$@\"\n",
             app, conn
         );
 

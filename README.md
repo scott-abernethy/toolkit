@@ -1,6 +1,6 @@
 # toolkit
 
-A security and access-control layer between AI coding agents and sensitive network services.
+A safety kit for your tools — protecting the boundary between AI coding agents and sensitive services.
 
 ## The Problem
 
@@ -12,7 +12,7 @@ AI coding agents (Claude Code, GitHub Copilot CLI, opencode, etc.) are increasin
 
 ## What Toolkit Does
 
-Toolkit provides a set of tools that sit between the agent and the upstream service. Each tool:
+Toolkit is a safety kit that sits between AI agents and upstream services. Each tool in the kit:
 
 1. **Enforces safety boundaries** — read-only by default, with explicit per-connection allowlists for any write or mutating operation. Write detection happens at the tool level, before queries reach the upstream service.
 2. **Hides credentials** — the agent never sees connection strings, passwords, or tokens. Configuration lives in a local file (`~/.config/toolkit/config.yaml`) that the agent doesn't read; the tool loads it internally.
@@ -21,7 +21,7 @@ Toolkit provides a set of tools that sit between the agent and the upstream serv
 
 ## Tools
 
-Toolkit has two kinds of tool: **native clients** that implement protocol-level safety, and a **generic proxy** that wraps any CLI with credential injection and command allow/deny rules.
+Toolkit has two kinds of tool: **native clients** that implement protocol-level safety, and a **guard** that wraps any CLI with credential injection and command allow/deny rules.
 
 ### Native Clients
 
@@ -32,9 +32,9 @@ Toolkit has two kinds of tool: **native clients** that implement protocol-level 
 
 Native clients earn their complexity — `tkpsql` enforces read-only at the Postgres session level and does type-aware JSON conversion; `tkdbr` compacts verbose Databricks API responses into token-efficient output. These are worth maintaining as dedicated crates because the upstream services need protocol-level handling that a generic wrapper can't provide.
 
-### Generic Proxy (`toolkit proxy`)
+### Guard (`toolkit guard`)
 
-For CLI tools where the main value is credential hiding and command gating — not protocol-level safety or output reshaping — `toolkit proxy` wraps any CLI with:
+For CLI tools where the main value is credential hiding and command gating — not protocol-level safety or output reshaping — `toolkit guard` wraps any CLI with:
 
 - **Credential injection** — env vars from config, never passed as arguments
 - **Command allow/deny rules** — token-based matching with `|` alternatives for plurals/aliases
@@ -60,7 +60,7 @@ kubectl:
       - "--kubeconfig"
 ```
 
-`toolkit install` generates wrapper scripts so agents interact with proxied tools naturally:
+`toolkit install` generates wrapper scripts so agents interact with guarded tools naturally:
 
 ```sh
 toolkit install
@@ -70,7 +70,7 @@ toolkit install
 tkkubectl-dev get pods -o json
 ```
 
-**When to use the proxy vs a native client:** Use `toolkit proxy` when the upstream CLI already produces usable output (e.g. `kubectl -o json`, `pup --json`) and you just need credential hiding and command gating. Build a native client when you need protocol-level enforcement (session-level read-only), semantic analysis (SQL write detection), or significant output transformation (type-aware JSON conversion).
+**When to use the guard vs a native client:** Use `toolkit guard` when the upstream CLI already produces usable output (e.g. `kubectl -o json`, `pup --json`) and you just need credential hiding and command gating. Build a native client when you need protocol-level enforcement (session-level read-only), semantic analysis (SQL write detection), or significant output transformation (type-aware JSON conversion).
 
 #### Rule Engine
 
@@ -162,7 +162,7 @@ Toolkit currently ships as CLI tools. This is a deliberate choice informed by th
 - **Cross-system coordination** — workflows spanning databases, Kubernetes, monitoring, and ticketing benefit from session state that CLIs don't naturally maintain.
 - **Discovery** — an agent connecting to a single MCP server learns all available operations, vs. needing to know about each CLI tool independently.
 
-**Current position:** CLI-first, with MCP as a potential future transport layer rather than a replacement. The core logic (safety boundaries, credential hiding, output shaping) lives in library crates that could serve both a CLI and an MCP server. The introduction of `tkproxy` means adding new services no longer requires new Rust crates — only config — so the scaling concern that might push toward MCP is less pressing. MCP remains worth revisiting if centralized auth or cross-system session state become real requirements.
+**Current position:** CLI-first, with MCP as a potential future transport layer rather than a replacement. The core logic (safety boundaries, credential hiding, output shaping) lives in library crates that could serve both a CLI and an MCP server. The introduction of `toolkit guard` means adding new services no longer requires new Rust crates — only config — so the scaling concern that might push toward MCP is less pressing. MCP remains worth revisiting if centralized auth or cross-system session state become real requirements.
 
 ## Documentation
 
