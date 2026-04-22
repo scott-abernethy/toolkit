@@ -44,6 +44,36 @@ psql:
       - migration_fc_party_ids
 ```
 
+## tkmsql
+
+`tkmsql` supports multiple named connections to MS SQL Server:
+
+```yaml
+msql:
+  onprem:
+    host: sql-server.internal
+    port: 1433
+    database: mydb
+    user: readonly
+    password: secret
+    tls: true          # enable TLS (default: true)
+    trust_cert: false  # trust self-signed certs (default: false)
+
+  # Connection with selective write access — only the listed tables can be mutated.
+  # The database user should also have the corresponding privileges (e.g. db_datawriter role).
+  # For read-only connections, use a user with only the db_datareader role.
+  migration:
+    host: sql-server.internal
+    port: 1433
+    database: mydb
+    user: migrationuser
+    password: secret
+    tls: true
+    trust_cert: true
+    writable_tables:
+      - migration_status
+```
+
 ## tkdbr
 
 `tkdbr` supports multiple named Databricks connections. Credentials are stored directly in `config.yaml` and injected via environment variables when invoking the Databricks CLI — no `~/.databrickscfg` file is needed.

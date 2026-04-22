@@ -28,6 +28,34 @@ Output is compact JSON:
 {"rows":[{"id":"1","name":"Alice"},{"id":"2","name":"Bob"}],"count":2}
 ```
 
+## tkmsql
+
+```sh
+# List tables (only one connection configured)
+tkmsql tables
+
+# List tables on a named connection
+tkmsql --conn onprem tables
+
+# List tables in a specific schema
+tkmsql --conn onprem tables --schema myschema
+
+# Run a SQL query
+tkmsql --conn onprem query --sql "SELECT TOP 10 id, name FROM users"
+
+# Describe a table's columns
+tkmsql --conn onprem describe --table users
+tkmsql --conn onprem describe --table dbo.users   # schema-qualified
+```
+
+By default all connections are strictly read-only — write and DDL statements (INSERT, UPDATE, DELETE, DROP, ALTER, CREATE, EXEC) are rejected at the tool level before the query reaches the database. For strongest protection, use a SQL login with only the `db_datareader` role. To permit writes on specific tables, add a `writable_tables` list to the connection config (see [configuration](configuration.md)).
+
+Output is compact JSON, same format as `tkpsql`:
+
+```json
+{"rows":[{"id":1,"name":"Alice"},{"id":2,"name":"Bob"}],"count":2}
+```
+
 ## tkdbr
 
 ```sh

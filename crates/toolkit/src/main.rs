@@ -601,9 +601,21 @@ dbr:
     allow: []
     deny: []
 ",
+        "msql" => "\
+msql:
+  conn:
+    host: sql-server.internal
+    port: 1433
+    database: mydb
+    user: readonly
+    password: changeme
+    tls: true
+    trust_cert: false
+    writable_tables: []
+",
         _ => {
             eprintln!("Unknown app: {}", app);
-            eprintln!("Known apps: psql, dbr");
+            eprintln!("Known apps: psql, dbr, msql");
             process::exit(1);
         }
     };

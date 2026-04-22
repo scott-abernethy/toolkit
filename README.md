@@ -27,10 +27,11 @@ Toolkit has two kinds of tool: **native clients** that implement protocol-level 
 
 | Binary   | Upstream Service | What It Provides |
 |----------|-----------------|------------------|
-| `tkpsql` | PostgreSQL | Query, describe tables, list schemas. Read-only by default; optional per-table write allowlists. |
+| `tkpsql` | PostgreSQL | Query, describe tables, list schemas. Read-only by default (session-level enforcement); optional per-table write allowlists. |
+| `tkmsql` | MS SQL Server | Query, describe tables, list schemas. Read-only via write detection and `db_datareader` role; optional per-table write allowlists. Supports on-prem servers with self-signed certs (`trust_cert`). |
 | `tkdbr`  | Databricks | Unity Catalog exploration, SQL queries, job/cluster/warehouse inspection, bundle management. Job triggering requires explicit opt-in. |
 
-Native clients earn their complexity — `tkpsql` enforces read-only at the Postgres session level and does type-aware JSON conversion; `tkdbr` compacts verbose Databricks API responses into token-efficient output. These are worth maintaining as dedicated crates because the upstream services need protocol-level handling that a generic wrapper can't provide.
+Native clients earn their complexity — `tkpsql` enforces read-only at the Postgres session level and does type-aware JSON conversion; `tkmsql` provides the same for MS SQL Server via the TDS protocol; `tkdbr` compacts verbose Databricks API responses into token-efficient output. `tkpsql` and `tkmsql` share write-detection and config-loading logic via `common::sql`. These are worth maintaining as dedicated crates because the upstream services need protocol-level handling that a generic wrapper can't provide.
 
 ### Guard (`toolkit guard`)
 
