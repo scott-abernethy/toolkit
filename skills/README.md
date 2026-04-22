@@ -36,6 +36,7 @@ done
 These skills wrap the CLI tools in this repo. They require `just install` to be run first.
 
 - **[tkpsql](tkpsql/SKILL.md)** - PostgreSQL queries with safe defaults
+- **[tkmsql](tkmsql/SKILL.md)** - MS SQL Server queries with safe defaults
 - **[tkdbr](tkdbr/SKILL.md)** - Databricks metadata exploration and bundle management
 
 ## Workflow Skills
