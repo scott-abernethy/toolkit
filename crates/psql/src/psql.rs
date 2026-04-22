@@ -28,9 +28,7 @@ pub struct ConnConfig {
 
 impl ConnConfig {
     fn is_readonly(&self) -> bool {
-        self.writable_tables
-            .as_ref()
-            .map_or(true, |t| t.is_empty())
+        self.writable_tables.as_ref().map_or(true, |t| t.is_empty())
     }
 
     fn use_tls(&self) -> bool {
@@ -199,10 +197,14 @@ fn row_to_json(row: &postgres::Row) -> Map<String, Value> {
 // Query execution
 // ---------------------------------------------------------------------------
 
-fn exec_query(config: &ConnConfig, sql: &str) -> Vec<postgres::Row> {
+fn exec_query(
+    config: &ConnConfig,
+    sql: &str,
+    params: &[&(dyn postgres::types::ToSql + Sync)],
+) -> Vec<postgres::Row> {
     let mut client = connect(config);
     client
-        .query(sql, &[])
+        .query(sql, params)
         .unwrap_or_else(|e| exit_with_error(sanitize_pg_error(&e)))
 }
 
@@ -214,18 +216,20 @@ pub fn run_query(config: &ConnConfig, sql: &str) {
     if let Some(table) = sql::detect_write_target(sql) {
         sql::assert_write_allowed(config.writable_tables.as_ref(), &table);
     }
-    let raw = exec_query(config, sql);
+    let raw = exec_query(config, sql, &[]);
     let rows: Vec<Map<String, Value>> = raw.iter().map(row_to_json).collect();
     QueryResponse::from_rows(rows).print();
 }
 
 pub fn list_tables(config: &ConnConfig, schema: &str) {
-    let sql = format!(
+    let raw = exec_query(
+        config,
         "SELECT table_name FROM information_schema.tables \
-         WHERE table_schema = '{}' ORDER BY table_name",
-        schema.replace('\'', "''")
+         WHERE table_schema = $1 ORDER BY table_name",
+        &[&schema],
     );
-    run_query(config, &sql);
+    let rows: Vec<Map<String, Value>> = raw.iter().map(row_to_json).collect();
+    QueryResponse::from_rows(rows).print();
 }
 
 pub fn describe_table(config: &ConnConfig, table: &str) {
@@ -236,13 +240,14 @@ pub fn describe_table(config: &ConnConfig, table: &str) {
         ("public", table)
     };
 
-    let sql = format!(
+    let raw = exec_query(
+        config,
         "SELECT column_name, data_type, is_nullable, column_default \
          FROM information_schema.columns \
-         WHERE table_schema = '{}' AND table_name = '{}' \
+         WHERE table_schema = $1 AND table_name = $2 \
          ORDER BY ordinal_position",
-        schema.replace('\'', "''"),
-        tbl.replace('\'', "''")
+        &[&schema, &tbl],
     );
-    run_query(config, &sql);
+    let rows: Vec<Map<String, Value>> = raw.iter().map(row_to_json).collect();
+    QueryResponse::from_rows(rows).print();
 }

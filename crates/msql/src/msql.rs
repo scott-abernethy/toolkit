@@ -191,8 +191,7 @@ fn cell_to_json(col: &ColumnData<'_>) -> Value {
             .map(|dt| {
                 let date = chrono::NaiveDate::from_ymd_opt(1, 1, 1).unwrap()
                     + chrono::Duration::days(dt.date().days() as i64);
-                let ns = dt.time().increments() as i64
-                    * 10i64.pow(9 - dt.time().scale() as u32);
+                let ns = dt.time().increments() as i64 * 10i64.pow(9 - dt.time().scale() as u32);
                 let time = chrono::NaiveTime::from_hms_opt(0, 0, 0).unwrap()
                     + chrono::Duration::nanoseconds(ns);
                 Value::String(chrono::NaiveDateTime::new(date, time).to_string())
@@ -203,13 +202,11 @@ fn cell_to_json(col: &ColumnData<'_>) -> Value {
                 let dt2 = dto.datetime2();
                 let date = chrono::NaiveDate::from_ymd_opt(1, 1, 1).unwrap()
                     + chrono::Duration::days(dt2.date().days() as i64);
-                let ns = dt2.time().increments() as i64
-                    * 10i64.pow(9 - dt2.time().scale() as u32);
+                let ns = dt2.time().increments() as i64 * 10i64.pow(9 - dt2.time().scale() as u32);
                 let time = chrono::NaiveTime::from_hms_opt(0, 0, 0).unwrap()
                     + chrono::Duration::nanoseconds(ns);
                 let naive = chrono::NaiveDateTime::new(date, time);
-                let offset =
-                    chrono::FixedOffset::east_opt(dto.offset() as i32 * 60).unwrap();
+                let offset = chrono::FixedOffset::east_opt(dto.offset() as i32 * 60).unwrap();
                 let dt = chrono::DateTime::<chrono::FixedOffset>::from_naive_utc_and_offset(
                     naive, offset,
                 );
@@ -223,10 +220,14 @@ fn cell_to_json(col: &ColumnData<'_>) -> Value {
 // Query execution
 // ---------------------------------------------------------------------------
 
-async fn exec_query(config: &ConnConfig, sql: &str) -> Vec<Map<String, Value>> {
+async fn exec_query(
+    config: &ConnConfig,
+    sql: &str,
+    params: &[&dyn tiberius::ToSql],
+) -> Vec<Map<String, Value>> {
     let mut client = connect(config).await;
     let stream = client
-        .simple_query(sql)
+        .query(sql, params)
         .await
         .unwrap_or_else(|e| exit_with_error(sanitize_tds_error(&e)));
 
@@ -252,17 +253,19 @@ pub async fn run_query(config: &ConnConfig, sql: &str) {
     if let Some(table) = sql::detect_write_target(sql) {
         sql::assert_write_allowed(config.writable_tables.as_ref(), &table);
     }
-    let rows = exec_query(config, sql).await;
+    let rows = exec_query(config, sql, &[]).await;
     QueryResponse::from_rows(rows).print();
 }
 
 pub async fn list_tables(config: &ConnConfig, schema: &str) {
-    let sql = format!(
+    let rows = exec_query(
+        config,
         "SELECT table_name FROM information_schema.tables \
-         WHERE table_schema = '{}' ORDER BY table_name",
-        schema.replace('\'', "''")
-    );
-    run_query(config, &sql).await;
+         WHERE table_schema = @P1 ORDER BY table_name",
+        &[&schema],
+    )
+    .await;
+    QueryResponse::from_rows(rows).print();
 }
 
 pub async fn describe_table(config: &ConnConfig, table: &str) {
@@ -273,13 +276,14 @@ pub async fn describe_table(config: &ConnConfig, table: &str) {
         ("dbo", table)
     };
 
-    let sql = format!(
+    let rows = exec_query(
+        config,
         "SELECT column_name, data_type, is_nullable, column_default \
          FROM information_schema.columns \
-         WHERE table_schema = '{}' AND table_name = '{}' \
+         WHERE table_schema = @P1 AND table_name = @P2 \
          ORDER BY ordinal_position",
-        schema.replace('\'', "''"),
-        tbl.replace('\'', "''")
-    );
-    run_query(config, &sql).await;
+        &[&schema, &tbl],
+    )
+    .await;
+    QueryResponse::from_rows(rows).print();
 }

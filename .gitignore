@@ -6,6 +6,7 @@
 *.age
 *.env
 .env*
+env.txt
 config.yaml
 credentials*
 *.secret
