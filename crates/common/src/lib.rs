@@ -1,5 +1,6 @@
 pub mod config;
 pub mod key;
+pub mod sql;
 
 use serde::Serialize;
 use std::process;

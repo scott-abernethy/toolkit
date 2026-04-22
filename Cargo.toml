@@ -2,6 +2,7 @@
 members = [
     "crates/common",
     "crates/dbr",
+    "crates/msql",
     "crates/psql",
     "crates/toolkit",
 ]
