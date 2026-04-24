@@ -76,10 +76,10 @@ class Toolkit < Formula
   end
 
   def install
-    bin.install "bin/toolkit"
-    bin.install "bin/tkpsql"
-    bin.install "bin/tkmsql"
-    bin.install "bin/tkdbr"
+    bin.install "toolkit"
+    bin.install "tkpsql"
+    bin.install "tkmsql"
+    bin.install "tkdbr"
   end
 
   test do
