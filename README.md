@@ -19,6 +19,22 @@ Toolkit is a safety kit that sits between AI agents and upstream services. Each 
 3. **Produces token-efficient output** — compact JSON with no decoration, no verbose metadata envelopes, and sensible default limits. Designed for direct consumption by LLMs.
 4. **Fails safely** — errors are returned as structured JSON (not stack traces), with credentials scrubbed from error messages.
 
+## Installation
+
+### Brew (recommended)
+
+```sh
+brew tap scott-abernethy/tap
+brew install scott-abernethy/tap/toolkit
+
+# Configure a connection
+toolkit config edit   # creates ~/.config/toolkit/config.yaml and opens $EDITOR via sops
+
+# Use it
+tkpsql tables
+tkpsql query --sql "SELECT id, name FROM users LIMIT 10"
+```
+
 ## Tools
 
 Toolkit has two kinds of tool: **native clients** that implement protocol-level safety, and a **guard** that wraps any CLI with credential injection and command allow/deny rules.
@@ -88,36 +104,6 @@ Args: ["get", "deployments"]
 ```
 
 Deny rules are checked first. If any deny rule matches, the command is rejected. Then at least one allow rule must match (unless the allow list is empty, which permits all non-denied commands).
-
-## Quick Start
-
-```sh
-# Install prerequisites
-brew install just
-asdf plugin add rust && asdf install
-
-# Build and install
-just install
-
-# Configure a connection
-toolkit config edit   # creates ~/.config/toolkit/config.yaml and opens $EDITOR via sops
-
-# Use it
-tkpsql tables
-tkpsql query --sql "SELECT id, name FROM users LIMIT 10"
-```
-
-## Private Homebrew Tap
-
-This repo includes `.github/workflows/release-private-tap.yml` to build release tarballs for macOS (`darwin-amd64` + `darwin-arm64`) and update a private tap formula.
-
-1. Create a private tap repo (example: `your-org/homebrew-toolkit`) with a `Formula/` directory.
-2. In this repo, set:
-   - Repository variable `BREW_TAP_REPO` = `owner/homebrew-toolkit`
-   - Repository secret `BREW_TAP_PAT` = token with write access to the tap repo
-3. Push a tag like `v0.2.0`.
-
-The workflow will publish release assets and update `Formula/toolkit.rb` in the tap repo to point to that tag.
 
 ## Agent Integration
 
