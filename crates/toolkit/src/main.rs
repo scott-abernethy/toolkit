@@ -7,7 +7,8 @@ use std::process;
 
 /// Only encrypt fields that contain credentials. Structure and non-sensitive
 /// values (port, tls, allow_job_runs, etc.) remain readable in the encrypted file.
-const ENCRYPTED_REGEX: &str = "^(host|database|user|password|token|DATABRICKS_HOST|DATABRICKS_TOKEN|DATABRICKS_ACCOUNT_ID)$";
+const ENCRYPTED_REGEX: &str =
+    "^(host|database|user|password|token|DATABRICKS_HOST|DATABRICKS_TOKEN|DATABRICKS_ACCOUNT_ID)$";
 
 /// Default environment variables set by known AI agent harnesses.
 /// If any are present, toolkit refuses to run — agents must not be able to
@@ -27,15 +28,28 @@ const DEFAULT_AGENT_ENV_VARS: &[&str] = &[
 fn load_agent_env_vars() -> Vec<String> {
     let path = config::config_path();
     if !path.exists() {
-        return DEFAULT_AGENT_ENV_VARS.iter().map(|s| s.to_string()).collect();
+        return DEFAULT_AGENT_ENV_VARS
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
     }
     let contents = match std::fs::read_to_string(&path) {
         Ok(c) => c,
-        Err(_) => return DEFAULT_AGENT_ENV_VARS.iter().map(|s| s.to_string()).collect(),
+        Err(_) => {
+            return DEFAULT_AGENT_ENV_VARS
+                .iter()
+                .map(|s| s.to_string())
+                .collect()
+        }
     };
     let value: serde_yaml::Value = match serde_yaml::from_str(&contents) {
         Ok(v) => v,
-        Err(_) => return DEFAULT_AGENT_ENV_VARS.iter().map(|s| s.to_string()).collect(),
+        Err(_) => {
+            return DEFAULT_AGENT_ENV_VARS
+                .iter()
+                .map(|s| s.to_string())
+                .collect()
+        }
     };
     match value
         .get("harness_detection")
@@ -46,7 +60,10 @@ fn load_agent_env_vars() -> Vec<String> {
             .iter()
             .filter_map(|v| v.as_str().map(|s| s.to_string()))
             .collect(),
-        None => DEFAULT_AGENT_ENV_VARS.iter().map(|s| s.to_string()).collect(),
+        None => DEFAULT_AGENT_ENV_VARS
+            .iter()
+            .map(|s| s.to_string())
+            .collect(),
     }
 }
 
@@ -121,7 +138,9 @@ enum ConfigCmd {
 }
 
 fn is_agent() -> bool {
-    load_agent_env_vars().iter().any(|var| std::env::var(var).is_ok())
+    load_agent_env_vars()
+        .iter()
+        .any(|var| std::env::var(var).is_ok())
 }
 
 fn main() {
@@ -154,7 +173,12 @@ fn main() {
             ConfigCmd::Migrate => cmd_config_migrate(),
         },
         Commands::Install => cmd_install(),
-        Commands::Guard { app, conn, debug, args } => {
+        Commands::Guard {
+            app,
+            conn,
+            debug,
+            args,
+        } => {
             let config = guard::load_config(&app, conn.as_deref());
             let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
             guard::check_rules(&config, &arg_refs);
@@ -278,8 +302,7 @@ fn cmd_install() {
         .get("install_path")
         .and_then(|v| v.as_str())
         .unwrap_or("$HOME/.local/bin");
-    let bin_dir =
-        std::path::PathBuf::from(install_path.replace("$HOME", &home));
+    let bin_dir = std::path::PathBuf::from(install_path.replace("$HOME", &home));
 
     std::fs::create_dir_all(&bin_dir).unwrap_or_else(|e| {
         eprintln!("Failed to create {}: {}", bin_dir.display(), e);
@@ -355,7 +378,8 @@ fn cmd_config_edit() {
 
     if path.exists() {
         let contents = std::fs::read_to_string(&path).unwrap_or_default();
-        let probe: serde_yaml::Value = serde_yaml::from_str(&contents).unwrap_or(serde_yaml::Value::Null);
+        let probe: serde_yaml::Value =
+            serde_yaml::from_str(&contents).unwrap_or(serde_yaml::Value::Null);
         if !config::is_encrypted(&probe) {
             let status = process::Command::new("sops")
                 .args(["--encrypt", "--encrypted-regex", ENCRYPTED_REGEX, "-i"])
@@ -575,7 +599,8 @@ fn cmd_config_show() {
 
 fn cmd_config_template(app: &str) {
     let template = match app {
-        "psql" => "\
+        "psql" => {
+            "\
 psql:
   conn:
     host: localhost
@@ -585,8 +610,10 @@ psql:
     password: changeme
     tls: false
     writable_tables: []
-",
-        "dbr" => "\
+"
+        }
+        "dbr" => {
+            "\
 dbr:
   dev:
     binary: databricks
@@ -600,8 +627,10 @@ dbr:
       # DATABRICKS_TOKEN: dapi...
     allow: []
     deny: []
-",
-        "msql" => "\
+"
+        }
+        "msql" => {
+            "\
 msql:
   conn:
     host: sql-server.internal
@@ -612,7 +641,8 @@ msql:
     tls: true
     trust_cert: false
     writable_tables: []
-",
+"
+        }
         _ => {
             eprintln!("Unknown app: {}", app);
             eprintln!("Known apps: psql, dbr, msql");
@@ -623,4 +653,3 @@ msql:
     println!("# Add to your config via `toolkit config edit`:");
     print!("{}", template);
 }
-

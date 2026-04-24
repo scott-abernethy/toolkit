@@ -18,18 +18,14 @@ pub fn config_path() -> PathBuf {
 
 /// Return true if the parsed YAML contains sops metadata (i.e. the file is encrypted).
 pub fn is_encrypted(value: &serde_yaml::Value) -> bool {
-    value
-        .get("sops")
-        .and_then(|s| s.get("version"))
-        .is_some()
+    value.get("sops").and_then(|s| s.get("version")).is_some()
 }
 
 /// Decrypt a sops-encrypted config file using the stored age private key.
 /// The key is passed only in the subprocess environment — it never touches disk.
 pub fn decrypt_config(path: &std::path::Path) -> String {
-    let key = crate::key::get_private_key().unwrap_or_else(|e| {
-        exit_with_error(format!("Failed to retrieve decryption key: {}", e))
-    });
+    let key = crate::key::get_private_key()
+        .unwrap_or_else(|e| exit_with_error(format!("Failed to retrieve decryption key: {}", e)));
     decrypt_config_with_key(path, &key)
 }
 
@@ -45,10 +41,7 @@ pub fn decrypt_config_with_key(path: &std::path::Path, key: &secrecy::SecretStri
         .env_remove("SOPS_AGE_KEY_FILE")
         .output()
         .unwrap_or_else(|e| {
-            exit_with_error(format!(
-                "Failed to run sops (is it installed?): {}",
-                e
-            ))
+            exit_with_error(format!("Failed to run sops (is it installed?): {}", e))
         });
 
     if !output.status.success() {
@@ -117,14 +110,17 @@ mod tests {
 
     #[test]
     fn test_is_encrypted_plaintext() {
-        let val: serde_yaml::Value = serde_yaml::from_str("psql:\n  local:\n    host: localhost").unwrap();
+        let val: serde_yaml::Value =
+            serde_yaml::from_str("psql:\n  local:\n    host: localhost").unwrap();
         assert!(!is_encrypted(&val));
     }
 
     #[test]
     fn test_is_encrypted_sops() {
-        let val: serde_yaml::Value =
-            serde_yaml::from_str("sops:\n  version: \"3.8.0\"\npsql:\n  local:\n    host: ENC[...]").unwrap();
+        let val: serde_yaml::Value = serde_yaml::from_str(
+            "sops:\n  version: \"3.8.0\"\npsql:\n  local:\n    host: ENC[...]",
+        )
+        .unwrap();
         assert!(is_encrypted(&val));
     }
 
@@ -147,7 +143,11 @@ mod tests {
     fn test_decrypt_config_with_key() {
         let (private_key, public_key) = crate::key::generate_keypair();
         let file = tempfile::NamedTempFile::with_suffix(".yaml").unwrap();
-        std::fs::write(file.path(), "psql:\n  local:\n    host: db.example.com\n    port: 5432\n    password: secret\n").unwrap();
+        std::fs::write(
+            file.path(),
+            "psql:\n  local:\n    host: db.example.com\n    port: 5432\n    password: secret\n",
+        )
+        .unwrap();
 
         sops_encrypt(file.path(), &public_key);
 
@@ -155,11 +155,17 @@ mod tests {
         let probe: serde_yaml::Value = serde_yaml::from_str(&contents).unwrap();
         assert!(is_encrypted(&probe), "file should be encrypted");
         // port is not in encrypted_regex — it should be plaintext in the file
-        assert_eq!(probe["psql"]["local"]["port"], serde_yaml::Value::Number(5432.into()));
+        assert_eq!(
+            probe["psql"]["local"]["port"],
+            serde_yaml::Value::Number(5432.into())
+        );
 
         let decrypted = decrypt_config_with_key(file.path(), &private_key);
         let val: serde_yaml::Value = serde_yaml::from_str(&decrypted).unwrap();
-        assert_eq!(val["psql"]["local"]["host"].as_str(), Some("db.example.com"));
+        assert_eq!(
+            val["psql"]["local"]["host"].as_str(),
+            Some("db.example.com")
+        );
         assert_eq!(val["psql"]["local"]["port"].as_i64(), Some(5432));
         assert_eq!(val["psql"]["local"]["password"].as_str(), Some("secret"));
     }
@@ -174,7 +180,11 @@ mod tests {
 
         let _guard = ENV_MUTEX.lock().unwrap();
         let file = tempfile::NamedTempFile::with_suffix(".yaml").unwrap();
-        std::fs::write(file.path(), "psql:\n  local:\n    host: localhost\n    port: 5432\n").unwrap();
+        std::fs::write(
+            file.path(),
+            "psql:\n  local:\n    host: localhost\n    port: 5432\n",
+        )
+        .unwrap();
         std::env::set_var("TOOLKIT_CONFIG", file.path());
 
         let configs = load_section::<std::collections::HashMap<String, TestConn>>("psql");

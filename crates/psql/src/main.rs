@@ -3,7 +3,10 @@ mod psql;
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(name = "tkpsql", about = "Read-only PostgreSQL query tool for AI agents")]
+#[command(
+    name = "tkpsql",
+    about = "Read-only PostgreSQL query tool for AI agents"
+)]
 struct Cli {
     /// Named connection from config (e.g. local, prod). Required if multiple connections are configured.
     #[arg(long, global = true)]

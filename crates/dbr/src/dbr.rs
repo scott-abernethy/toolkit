@@ -821,11 +821,11 @@ const QUERY_POLL_INTERVAL: Duration = Duration::from_secs(2);
 /// Execute a SQL query via the Statement Execution API.
 /// Uses `databricks api post /api/2.0/sql/statements` to submit, then polls if needed.
 pub fn query(config: &ConnConfig, sql: &str, warehouse_id: Option<&str>, limit: u32) {
-    let wh_id = warehouse_id
-        .or(config.warehouse_id())
-        .unwrap_or_else(|| {
-            exit_with_error("no warehouse_id: pass --warehouse-id or set DATABRICKS_WAREHOUSE_ID in config env")
-        });
+    let wh_id = warehouse_id.or(config.warehouse_id()).unwrap_or_else(|| {
+        exit_with_error(
+            "no warehouse_id: pass --warehouse-id or set DATABRICKS_WAREHOUSE_ID in config env",
+        )
+    });
 
     // Apply LIMIT to the SQL if the user hasn't already included one
     let statement = if limit > 0 && !has_limit_clause(sql) {

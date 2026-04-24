@@ -3,7 +3,10 @@ mod msql;
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(name = "tkmsql", about = "Read-only MS SQL Server query tool for AI agents")]
+#[command(
+    name = "tkmsql",
+    about = "Read-only MS SQL Server query tool for AI agents"
+)]
 struct Cli {
     /// Named connection from config (e.g. onprem, prod). Required if multiple connections are configured.
     #[arg(long, global = true)]
