@@ -1,0 +1,152 @@
+name: Release and update private tap
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
+      version: ${{ steps.meta.outputs.version }}
+    steps:
+      - id: meta
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          version="${tag#v}"
+          if [ "${version}" = "${tag}" ]; then
+            echo "Expected tag to start with v (example: v0.2.0)" >&2
+            exit 1
+          fi
+          echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+
+  build:
+    needs: prepare
+    strategy:
+      matrix:
+        include:
+          - os: macos-13
+            target: x86_64-apple-darwin
+            asset_suffix: darwin-amd64
+          - os: macos-14
+            target: aarch64-apple-darwin
+            asset_suffix: darwin-arm64
+    runs-on: ${{ matrix.os }}
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+      TARGET: ${{ matrix.target }}
+      ASSET_SUFFIX: ${{ matrix.asset_suffix }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Build release binaries
+        run: cargo build --release --workspace --target "${TARGET}"
+
+      - name: Package binaries
+        run: |
+          set -euo pipefail
+          mkdir -p dist/bin
+          cp "target/${TARGET}/release/toolkit" dist/bin/
+          cp "target/${TARGET}/release/tkpsql" dist/bin/
+          cp "target/${TARGET}/release/tkmsql" dist/bin/
+          cp "target/${TARGET}/release/tkdbr" dist/bin/
+          tar -C dist -czf "toolkit-${VERSION}-${ASSET_SUFFIX}.tar.gz" bin
+          shasum -a 256 "toolkit-${VERSION}-${ASSET_SUFFIX}.tar.gz" > "toolkit-${VERSION}-${ASSET_SUFFIX}.tar.gz.sha256"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.asset_suffix }}
+          path: |
+            toolkit-${{ env.VERSION }}-${{ env.ASSET_SUFFIX }}.tar.gz
+            toolkit-${{ env.VERSION }}-${{ env.ASSET_SUFFIX }}.tar.gz.sha256
+
+  release:
+    needs: [prepare, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          merge-multiple: true
+
+      - name: Publish GitHub release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.prepare.outputs.tag }}
+          files: |
+            toolkit-${{ needs.prepare.outputs.version }}-darwin-amd64.tar.gz
+            toolkit-${{ needs.prepare.outputs.version }}-darwin-amd64.tar.gz.sha256
+            toolkit-${{ needs.prepare.outputs.version }}-darwin-arm64.tar.gz
+            toolkit-${{ needs.prepare.outputs.version }}-darwin-arm64.tar.gz.sha256
+
+  update-tap:
+    needs: [prepare, release]
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+      BREW_TAP_REPO: ${{ vars.BREW_TAP_REPO }}
+      BREW_TAP_PAT: ${{ secrets.BREW_TAP_PAT }}
+      SOURCE_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          merge-multiple: true
+
+      - name: Validate tap configuration
+        run: |
+          set -euo pipefail
+          if [ -z "${BREW_TAP_REPO}" ]; then
+            echo "Set repository variable BREW_TAP_REPO to owner/homebrew-tap-repo." >&2
+            exit 1
+          fi
+          if [ -z "${BREW_TAP_PAT}" ]; then
+            echo "Set secret BREW_TAP_PAT with write access to the tap repository." >&2
+            exit 1
+          fi
+
+      - name: Clone tap repo
+        run: |
+          set -euo pipefail
+          git clone "https://x-access-token:${BREW_TAP_PAT}@github.com/${BREW_TAP_REPO}.git" /tmp/homebrew-tap
+
+      - name: Generate formula
+        run: |
+          set -euo pipefail
+          amd64_sha="$(awk '{print $1}' "toolkit-${VERSION}-darwin-amd64.tar.gz.sha256")"
+          arm64_sha="$(awk '{print $1}' "toolkit-${VERSION}-darwin-arm64.tar.gz.sha256")"
+          mkdir -p /tmp/homebrew-tap/Formula
+          ./scripts/generate_brew_formula.sh \
+            --version "${VERSION}" \
+            --repo "${SOURCE_REPO}" \
+            --darwin-amd64-sha "${amd64_sha}" \
+            --darwin-arm64-sha "${arm64_sha}" \
+            --output /tmp/homebrew-tap/Formula/toolkit.rb
+
+      - name: Commit and push formula
+        run: |
+          set -euo pipefail
+          cd /tmp/homebrew-tap
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/toolkit.rb
+          if git diff --cached --quiet; then
+            echo "Formula already up-to-date."
+            exit 0
+          fi
+          git commit -m "toolkit ${VERSION}"
+          git push origin HEAD

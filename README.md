@@ -107,6 +107,18 @@ tkpsql tables
 tkpsql query --sql "SELECT id, name FROM users LIMIT 10"
 ```
 
+## Private Homebrew Tap
+
+This repo includes `.github/workflows/release-private-tap.yml` to build release tarballs for macOS (`darwin-amd64` + `darwin-arm64`) and update a private tap formula.
+
+1. Create a private tap repo (example: `your-org/homebrew-toolkit`) with a `Formula/` directory.
+2. In this repo, set:
+   - Repository variable `BREW_TAP_REPO` = `owner/homebrew-toolkit`
+   - Repository secret `BREW_TAP_PAT` = token with write access to the tap repo
+3. Push a tag like `v0.2.0`.
+
+The workflow will publish release assets and update `Formula/toolkit.rb` in the tap repo to point to that tag.
+
 ## Agent Integration
 
 Toolkit includes skill and agent definitions so AI harnesses can discover and use the tools automatically.
@@ -171,3 +183,7 @@ Toolkit currently ships as CLI tools. This is a deliberate choice informed by th
 - [Configuration](docs/configuration.md) — config file format with examples for all tools
 - [Contributing](docs/contributing.md) — development commands, prerequisites, and how to add new tools
 - [Agent conventions](AGENTS.md) — output format, token efficiency guidelines, and project structure for contributors
+
+## License
+
+MIT — see [LICENSE](LICENSE).
