@@ -50,33 +50,48 @@ pub fn load_config(conn: Option<&str>) -> ConnConfig {
 // ---------------------------------------------------------------------------
 
 async fn connect(config: &ConnConfig) -> Client<tokio_util::compat::Compat<TcpStream>> {
-    let mut cfg = Config::new();
-    cfg.host(&config.host);
-    cfg.port(config.port());
-    cfg.database(&config.database);
-    cfg.authentication(AuthMethod::sql_server(
-        &config.user,
-        config.password.as_deref().unwrap_or(""),
-    ));
+    let mut host = config.host.clone();
+    let mut port = config.port();
 
-    if config.trust_cert() {
-        cfg.trust_cert();
+    for _ in 0..5 {
+        let mut cfg = Config::new();
+        cfg.host(&host);
+        cfg.port(port);
+        cfg.database(&config.database);
+        cfg.authentication(AuthMethod::sql_server(
+            &config.user,
+            config.password.as_deref().unwrap_or(""),
+        ));
+
+        if config.trust_cert() {
+            cfg.trust_cert();
+        }
+
+        if !config.use_tls() {
+            cfg.encryption(EncryptionLevel::NotSupported);
+        }
+
+        let addr = format!("{}:{}", host, port);
+        let tcp = TcpStream::connect(&addr)
+            .await
+            .unwrap_or_else(|e| exit_with_error(sanitize_connect_error(&e)));
+
+        tcp.set_nodelay(true).ok();
+
+        match Client::connect(cfg, tcp.compat_write()).await {
+            Ok(client) => return client,
+            Err(tiberius::error::Error::Routing {
+                host: rhost,
+                port: rport,
+            }) => {
+                host = rhost;
+                port = rport;
+            }
+            Err(e) => exit_with_error(sanitize_tds_error(&e)),
+        }
     }
 
-    if !config.use_tls() {
-        cfg.encryption(EncryptionLevel::NotSupported);
-    }
-
-    let addr = format!("{}:{}", config.host, config.port());
-    let tcp = TcpStream::connect(&addr)
-        .await
-        .unwrap_or_else(|e| exit_with_error(sanitize_connect_error(&e)));
-
-    tcp.set_nodelay(true).ok();
-
-    Client::connect(cfg, tcp.compat_write())
-        .await
-        .unwrap_or_else(|e| exit_with_error(sanitize_tds_error(&e)))
+    exit_with_error("too many server redirects".to_string())
 }
 
 // ---------------------------------------------------------------------------
