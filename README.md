@@ -26,6 +26,10 @@ Toolkit is a safety kit that sits between AI agents and upstream services. Each 
 ```sh
 brew tap scott-abernethy/tap
 brew install scott-abernethy/tap/toolkit
+brew install sops
+
+# Generate the age keypair used to encrypt/decrypt your config
+toolkit init
 
 # Configure a connection
 toolkit config edit   # creates ~/.config/toolkit/config.yaml and opens $EDITOR via sops
