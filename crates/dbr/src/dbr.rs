@@ -692,10 +692,9 @@ pub fn auth_login(config: &ConnConfig) {
         .unwrap_or_else(|| exit_with_error("DATABRICKS_HOST not set in config env"));
 
     let status = Command::new("databricks")
-        .args(["auth", "login", "--host", host])
+        .args(["auth", "login", "--host", host, "--profile", &config.conn_name])
         .envs(&config.env)
         .env("DATABRICKS_CONFIG_FILE", dbr_config_file())
-        .env("DATABRICKS_CONFIG_PROFILE", &config.conn_name)
         .status()
         .unwrap_or_else(|e| exit_with_error(format!("Failed to run databricks CLI: {}", e)));
 
