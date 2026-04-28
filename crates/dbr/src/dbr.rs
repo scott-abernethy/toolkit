@@ -106,7 +106,6 @@ fn run_databricks(config: &ConnConfig, args: &[&str]) -> Value {
     // Inject credentials via env vars — no external config files needed
     cmd.envs(&config.env);
     cmd.env("DATABRICKS_CONFIG_FILE", dbr_config_file());
-    cmd.env("DATABRICKS_CONFIG_PROFILE", &config.conn_name);
 
     let output = cmd
         .output()
@@ -139,7 +138,6 @@ fn run_databricks_no_json(config: &ConnConfig, args: &[&str]) -> (String, String
     // Inject credentials via env vars — no external config files needed
     cmd.envs(&config.env);
     cmd.env("DATABRICKS_CONFIG_FILE", dbr_config_file());
-    cmd.env("DATABRICKS_CONFIG_PROFILE", &config.conn_name);
 
     let output = cmd
         .output()
