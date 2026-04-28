@@ -693,14 +693,19 @@ pub fn auth_login(config: &ConnConfig) {
         .map(|s| s.as_str())
         .unwrap_or_else(|| exit_with_error("DATABRICKS_HOST not set in config env"));
 
-    let status = Command::new("databricks")
+    let output = Command::new("databricks")
         .args(["auth", "login", "--host", host, "--profile", &config.conn_name])
         .envs(&config.env)
         .env("DATABRICKS_CONFIG_FILE", dbr_config_file())
-        .status()
+        .output()
         .unwrap_or_else(|e| exit_with_error(format!("Failed to run databricks CLI: {}", e)));
 
-    std::process::exit(status.code().unwrap_or(1));
+    if output.status.success() {
+        println!("{{\"ok\": true}}");
+    } else {
+        let msg = String::from_utf8_lossy(&output.stderr);
+        exit_with_error(msg.trim().to_string());
+    }
 }
 
 // ---------------------------------------------------------------------------
