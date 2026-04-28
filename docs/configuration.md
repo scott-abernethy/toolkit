@@ -8,6 +8,8 @@ If only one connection is configured for a tool, `--conn` can be omitted. If mul
 
 ## Setup
 
+Prerequisites: `sops` must be installed (`brew install sops` on macOS).
+
 Run `toolkit init` once to generate an age keypair, then use `toolkit config edit` to open the config in `$EDITOR` via sops. The file is encrypted on save.
 
 ## tkpsql
@@ -76,21 +78,26 @@ msql:
 
 ## tkdbr
 
-`tkdbr` supports multiple named Databricks connections. Credentials are stored directly in `config.yaml` and injected via environment variables when invoking the Databricks CLI — no `~/.databrickscfg` file is needed.
+`tkdbr` supports multiple named Databricks connections. Credentials are stored in `config.yaml` under an `env:` map and injected as environment variables when invoking the Databricks CLI — no `~/.databrickscfg` file is needed.
 
 ```yaml
 dbr:
   dev:
-    host: https://dbc-abc123.cloud.databricks.com
-    token: dapi...                     # personal access token
-    warehouse_id: 9f9919ede4d8f98d     # default SQL warehouse for queries
-    allow_job_runs: false              # permit jobs trigger (default: false)
-    bundle_target: dev                 # bundle target (default: "local")
+    env:
+      DATABRICKS_HOST: https://dbc-abc123.cloud.databricks.com
+      DATABRICKS_AUTH_TYPE: pat
+      DATABRICKS_TOKEN: dapi...          # personal access token
+      DATABRICKS_WAREHOUSE_ID: abc123    # default SQL warehouse for queries
+    allow_job_runs: false                # permit jobs trigger (default: false)
+    bundle_target: dev                   # bundle target (default: "local")
 
+  # OAuth browser flow (no token required — run `tkdbr auth login` to authenticate)
   prod:
-    host: https://dbc-def456.cloud.databricks.com
-    token: dapi...
-    warehouse_id: abc123def456
+    env:
+      DATABRICKS_HOST: https://dbc-def456.cloud.databricks.com
+      DATABRICKS_AUTH_TYPE: external-browser
+      DATABRICKS_ACCOUNT_ID: 00000000-0000-0000-0000-000000000000
+      DATABRICKS_WAREHOUSE_ID: abc123def456
     allow_job_runs: false
     bundle_target: prod
 ```
