@@ -55,9 +55,11 @@ enum Commands {
         #[command(subcommand)]
         cmd: BundleCmd,
     },
-    /// Print a valid auth token for the configured Databricks host.
-    /// Runs `databricks auth token --host <host>` with inherited stdio.
-    Auth,
+    /// Authenticate with Databricks (OAuth browser flow)
+    Auth {
+        #[command(subcommand)]
+        cmd: AuthCmd,
+    },
     /// Execute a SQL query against a warehouse
     Query {
         /// SQL statement to execute
@@ -213,6 +215,15 @@ enum BundleCmd {
     },
 }
 
+#[derive(Subcommand)]
+enum AuthCmd {
+    /// Log in to Databricks via OAuth browser flow.
+    /// Writes credentials to ~/.config/toolkit/tkdbr-config under a profile
+    /// named after --conn. No manual ~/.databrickscfg setup required.
+    Login,
+}
+
+
 fn main() {
     let cli = Cli::parse();
     let config = dbr::load_config(cli.conn.as_deref());
@@ -262,7 +273,9 @@ fn main() {
             BundleCmd::Deploy => dbr::bundle_deploy(&config),
             BundleCmd::Run { name, only } => dbr::bundle_run(&config, &name, only.as_deref()),
         },
-        Commands::Auth => dbr::auth_token(&config),
+        Commands::Auth { cmd } => match cmd {
+            AuthCmd::Login => dbr::auth_login(&config),
+        },
         Commands::Query {
             sql,
             warehouse_id,

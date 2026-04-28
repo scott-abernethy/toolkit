@@ -21,6 +21,9 @@ pub struct ConnConfig {
     pub allow_job_runs: Option<bool>,
     /// Bundle target for bundle commands (e.g. "local", "dev", "prod")
     pub bundle_target: Option<String>,
+    /// Connection name (not from config file — set by load_config)
+    #[serde(skip)]
+    pub conn_name: String,
 }
 
 impl ConnConfig {
@@ -45,17 +48,23 @@ pub fn load_config(conn: Option<&str>) -> ConnConfig {
     let mut configs = common::load_section::<HashMap<String, ConnConfig>>("dbr");
 
     match conn {
-        Some(name) => configs.remove(name).unwrap_or_else(|| {
-            let available = sorted_keys(&configs);
-            exit_with_error(format!(
-                "Unknown connection '{}'. Available: {}",
-                name,
-                available.join(", ")
-            ))
-        }),
+        Some(name) => {
+            let mut c = configs.remove(name).unwrap_or_else(|| {
+                let available = sorted_keys(&configs);
+                exit_with_error(format!(
+                    "Unknown connection '{}'. Available: {}",
+                    name,
+                    available.join(", ")
+                ))
+            });
+            c.conn_name = name.to_string();
+            c
+        }
         None => {
             if configs.len() == 1 {
-                configs.into_values().next().unwrap()
+                let (name, mut c) = configs.into_iter().next().unwrap();
+                c.conn_name = name;
+                c
             } else {
                 let available = sorted_keys(&configs);
                 exit_with_error(format!(
@@ -77,6 +86,13 @@ fn sorted_keys(map: &HashMap<String, ConnConfig>) -> Vec<String> {
 // CLI invocation
 // ---------------------------------------------------------------------------
 
+/// Path to the toolkit-managed databricks config file.
+/// Credentials written here by `tkdbr auth login`; read by all subsequent calls.
+fn dbr_config_file() -> String {
+    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+    format!("{}/.config/toolkit/tkdbr-config", home)
+}
+
 /// Run a `databricks` subcommand and return parsed JSON output.
 /// Global flags (--profile, --output) are prepended; subcommand args follow.
 fn run_databricks(config: &ConnConfig, args: &[&str]) -> Value {
@@ -89,6 +105,8 @@ fn run_databricks(config: &ConnConfig, args: &[&str]) -> Value {
 
     // Inject credentials via env vars — no external config files needed
     cmd.envs(&config.env);
+    cmd.env("DATABRICKS_CONFIG_FILE", dbr_config_file());
+    cmd.env("DATABRICKS_CONFIG_PROFILE", &config.conn_name);
 
     let output = cmd
         .output()
@@ -120,6 +138,8 @@ fn run_databricks_no_json(config: &ConnConfig, args: &[&str]) -> (String, String
 
     // Inject credentials via env vars — no external config files needed
     cmd.envs(&config.env);
+    cmd.env("DATABRICKS_CONFIG_FILE", dbr_config_file());
+    cmd.env("DATABRICKS_CONFIG_PROFILE", &config.conn_name);
 
     let output = cmd
         .output()
@@ -663,10 +683,10 @@ pub fn tables_get(config: &ConnConfig, catalog: &str, schema: &str, table: &str)
 // Auth
 // ---------------------------------------------------------------------------
 
-/// Run `databricks auth token --host <host>` interactively, inheriting stdio.
-/// Outputs a valid token for the configured host, triggering an OAuth browser
-/// flow if the stored token is missing or expired.
-pub fn auth_token(config: &ConnConfig) {
+/// Run `databricks auth login --host <host>` interactively, inheriting stdio.
+/// Writes OAuth credentials to DATABRICKS_CONFIG_FILE under DATABRICKS_CONFIG_PROFILE,
+/// so all subsequent tkdbr commands find them without a manually created ~/.databrickscfg.
+pub fn auth_login(config: &ConnConfig) {
     let host = config
         .env
         .get("DATABRICKS_HOST")
@@ -674,8 +694,10 @@ pub fn auth_token(config: &ConnConfig) {
         .unwrap_or_else(|| exit_with_error("DATABRICKS_HOST not set in config env"));
 
     let status = Command::new("databricks")
-        .args(["auth", "token", "--host", host])
+        .args(["auth", "login", "--host", host])
         .envs(&config.env)
+        .env("DATABRICKS_CONFIG_FILE", dbr_config_file())
+        .env("DATABRICKS_CONFIG_PROFILE", &config.conn_name)
         .status()
         .unwrap_or_else(|e| exit_with_error(format!("Failed to run databricks CLI: {}", e)));
 
