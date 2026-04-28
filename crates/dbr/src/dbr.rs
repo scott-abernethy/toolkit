@@ -663,11 +663,10 @@ pub fn tables_get(config: &ConnConfig, catalog: &str, schema: &str, table: &str)
 // Auth
 // ---------------------------------------------------------------------------
 
-/// Run `databricks auth login --host <host>` interactively, inheriting stdio.
-/// Using --host instead of --profile means no pre-existing ~/.databrickscfg
-/// profile definition is required. The CLI stores OAuth tokens keyed by host
-/// URL, which subsequent invocations find via the DATABRICKS_HOST env var.
-pub fn auth_login(config: &ConnConfig) {
+/// Run `databricks auth token --host <host>` interactively, inheriting stdio.
+/// Outputs a valid token for the configured host, triggering an OAuth browser
+/// flow if the stored token is missing or expired.
+pub fn auth_token(config: &ConnConfig) {
     let host = config
         .env
         .get("DATABRICKS_HOST")
@@ -675,7 +674,7 @@ pub fn auth_login(config: &ConnConfig) {
         .unwrap_or_else(|| exit_with_error("DATABRICKS_HOST not set in config env"));
 
     let status = Command::new("databricks")
-        .args(["auth", "login", "--host", host])
+        .args(["auth", "token", "--host", host])
         .envs(&config.env)
         .status()
         .unwrap_or_else(|e| exit_with_error(format!("Failed to run databricks CLI: {}", e)));
