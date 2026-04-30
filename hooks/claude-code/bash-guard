@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# toolkit bash-guard — Claude Code PreToolUse hook for Bash
+#
+# Blocks bash commands that directly invoke credential management tools or
+# use common file-reading verbs against known credential directories.
+#
+# Coverage: sops/age/toolkit commands and simple cat/head/tail patterns.
+# Limitation: does not block indirect access (awk, python, shell redirection,
+# etc.) — this is best-effort, not a comprehensive sandbox.
+#
+# Install: just install-hooks
+# Register: add hooks/claude-code/settings.snippet.json to ~/.claude/settings.json
+
+set -euo pipefail
+
+block() {
+    printf '{"decision":"block","reason":"%s"}\n' "${1//\"/\\\"}"
+    exit 0
+}
+
+# Fail closed: block on any unhandled error
+trap 'block "bash-guard: internal error — blocked as precaution"' ERR
+
+command -v jq >/dev/null 2>&1 || block "bash-guard: jq not found — install jq to enable this hook"
+
+INPUT=$(cat)
+CMD=$(printf '%s' "$INPUT" | jq -r '.tool_input.command // ""') || block "bash-guard: failed to parse input"
+
+# Block direct sops/age/toolkit invocations (belt+suspenders on top of permissions.deny).
+if printf '%s\n' "$CMD" | grep -qE '^\s*(sops|age|age-keygen|toolkit)\s' || \
+   printf '%s\n' "$CMD" | grep -qE '^\s*(sops|age|age-keygen|toolkit)$'; then
+    block "Direct sops/age/toolkit invocation is blocked — use toolkit tools for data access"
+fi
+
+# Best-effort: block common file-reading verbs on home directory credential paths.
+# Requires the path to be rooted at ~, $HOME, or the resolved home directory —
+# avoiding false positives from relative paths like test-results.aws/foo.
+CRED_DIRS="(\.config/sops|\.config/toolkit|\.ssh|\.aws|\.gnupg|\.kube|\.azure|\.config/gcloud|\.config/gh)"
+HOME_ESCAPED="${HOME//./\\.}"
+
+if printf '%s\n' "$CMD" | grep -qE '\b(cat|head|tail|less|more|bat|nano|vim|vi|emacs)\b' && \
+   printf '%s\n' "$CMD" | grep -qE "(~|\\\$HOME|${HOME_ESCAPED})/${CRED_DIRS}/"; then
+    block "Reading credential directories via shell is blocked — use toolkit tools for data access"
+fi
+
+printf '{"decision":"allow"}\n'

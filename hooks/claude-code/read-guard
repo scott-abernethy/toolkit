@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+# toolkit read-guard — Claude Code PreToolUse hook for Read
+#
+# Blocks file reads to credential stores: toolkit config, age keys, SSH,
+# AWS, cloud credentials, dot-env files, and other common secret locations.
+#
+# Install: just install-hooks
+# Register: add hooks/claude-code/settings.snippet.json to ~/.claude/settings.json
+
+set -euo pipefail
+
+block() {
+    printf '{"decision":"block","reason":"%s"}\n' "${1//\"/\\\"}"
+    exit 0
+}
+
+# Fail closed: block on any unhandled error
+trap 'block "read-guard: internal error — blocked as precaution"' ERR
+
+command -v jq >/dev/null 2>&1 || block "read-guard: jq not found — install jq to enable this hook"
+
+INPUT=$(cat)
+FILE=$(printf '%s' "$INPUT" | jq -r '.tool_input.file_path // ""') || block "read-guard: failed to parse input"
+
+# Expand leading ~ to $HOME for consistent prefix comparison
+RESOLVED="${FILE/#\~/$HOME}"
+
+# Returns 0 (true) if path equals prefix exactly or is inside it (prefix + /)
+path_under() {
+    local path="$1" prefix="$2"
+    [[ "$path" == "$prefix" || "$path" == "$prefix/"* ]]
+}
+
+# Protected directory prefixes — block any file inside these directories
+PROTECTED_DIRS=(
+    "$HOME/.config/toolkit"
+    "$HOME/.config/sops"
+    "$HOME/.ssh"
+    "$HOME/.aws"
+    "$HOME/.gnupg"
+    "$HOME/.kube"
+    "$HOME/.azure"
+    "$HOME/.config/gcloud"
+    "$HOME/.config/gh"
+)
+
+for prefix in "${PROTECTED_DIRS[@]}"; do
+    path_under "$RESOLVED" "$prefix" && \
+        block "Reading from ${prefix/$HOME/~} is blocked"
+done
+
+# Protected exact files
+PROTECTED_FILES=(
+    "$HOME/.databrickscfg"
+    "$HOME/.netrc"
+    "$HOME/.npmrc"
+    "$HOME/.pypirc"
+    "$HOME/.git-credentials"
+    "$HOME/.docker/config.json"
+)
+
+for exact in "${PROTECTED_FILES[@]}"; do
+    [[ "$RESOLVED" == "$exact" ]] && block "Reading ${exact/$HOME/~} is blocked"
+done
+
+# Block .env files (any directory) — allow .env.example which typically has no real secrets
+filename=$(basename "$RESOLVED")
+case "$filename" in
+    .env | .env.*)
+        case "$filename" in
+            *.example) ;; # .env.example is safe
+            *) block "Reading .env files is blocked" ;;
+        esac
+        ;;
+esac
+
+printf '{"decision":"allow"}\n'

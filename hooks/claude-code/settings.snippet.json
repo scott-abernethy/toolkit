@@ -1,0 +1,33 @@
+{
+  "_comment": "Merge this into ~/.claude/settings.json. Install hook scripts first: just install-hooks",
+  "permissions": {
+    "deny": [
+      "Bash(sops:*)",
+      "Bash(age:*)",
+      "Bash(age-keygen:*)",
+      "Bash(toolkit:*)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.config/toolkit/hooks/bash-guard"
+          }
+        ]
+      },
+      {
+        "matcher": "Read",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.config/toolkit/hooks/read-guard"
+          }
+        ]
+      }
+    ]
+  }
+}

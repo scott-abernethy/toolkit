@@ -141,6 +141,25 @@ done
 
 See [skills/README.md](skills/README.md) for full setup details and troubleshooting.
 
+## Harness Protections
+
+Toolkit's threat model explicitly calls out that harness-level hooks are a required layer alongside toolkit's own controls. The `hooks/` directory provides ready-to-use recipes for Claude Code and opencode that block:
+
+- Direct `sops`, `age`, and `toolkit` management commands via the Bash tool
+- File reads to `~/.config/toolkit`, `~/.config/sops`, `~/.ssh`, `~/.aws`, `~/.gnupg`, and other credential stores via the Read tool
+- `.env` file reads (project-local secrets)
+
+```sh
+# Install hook scripts
+just install-hooks
+
+# Then merge the harness-specific snippet into your settings:
+#   Claude Code:  hooks/claude-code/settings.snippet.json → ~/.claude/settings.json
+#   opencode:     hooks/opencode/opencode.snippet.json    → ~/.config/opencode/opencode.json
+```
+
+See [docs/hooks.md](docs/hooks.md) for full instructions, coverage details, and Copilot CLI notes.
+
 ## Landscape & Motivation
 
 Toolkit occupies a gap in the current ecosystem. Existing approaches each solve part of the problem:

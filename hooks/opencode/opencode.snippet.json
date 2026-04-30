@@ -1,0 +1,36 @@
+{
+  "_comment": "Merge the 'permission' block into ~/.config/opencode/opencode.json. Last matching rule wins.",
+  "permission": {
+    "bash": {
+      "*": "ask",
+      "sops *": "deny",
+      "age *": "deny",
+      "age-keygen *": "deny",
+      "toolkit *": "deny"
+    },
+    "read": {
+      "*": "allow",
+      "*.env": "deny",
+      "*.env.*": "deny",
+      "*.env.example": "allow",
+      "~/.config/toolkit/**": "deny",
+      "~/.config/sops/**": "deny",
+      "~/.ssh/**": "deny",
+      "~/.aws/**": "deny",
+      "~/.gnupg/**": "deny",
+      "~/.kube/**": "deny",
+      "~/.azure/**": "deny",
+      "~/.config/gcloud/**": "deny",
+      "~/.config/gh/**": "deny",
+      "~/.databrickscfg": "deny",
+      "~/.netrc": "deny",
+      "~/.npmrc": "deny",
+      "~/.pypirc": "deny",
+      "~/.git-credentials": "deny",
+      "~/.docker/config.json": "deny"
+    },
+    "external_directory": {
+      "*": "ask"
+    }
+  }
+}

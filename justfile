@@ -12,6 +12,17 @@ setup:
 install:
     for crate in crates/*/; do cargo install --path "$crate" --root ~/.cargo; done
 
+# Install harness hook scripts to ~/.config/toolkit/hooks/
+install-hooks:
+    mkdir -p ~/.config/toolkit/hooks
+    cp hooks/claude-code/bash-guard hooks/claude-code/read-guard ~/.config/toolkit/hooks/
+    chmod +x ~/.config/toolkit/hooks/bash-guard ~/.config/toolkit/hooks/read-guard
+    @echo "Hook scripts installed to ~/.config/toolkit/hooks/"
+    @echo ""
+    @echo "Next: merge hooks/claude-code/settings.snippet.json into ~/.claude/settings.json"
+    @echo "      merge hooks/opencode/opencode.snippet.json into ~/.config/opencode/opencode.json"
+    @echo "      See docs/hooks.md for full instructions."
+
 # Uninstall all tools
 uninstall:
     for crate in crates/*/; do basename "$crate" | xargs cargo uninstall --root ~/.cargo; done
