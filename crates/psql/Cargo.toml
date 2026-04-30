@@ -8,6 +8,10 @@ license = "MIT"
 name = "tkpsql"
 path = "src/main.rs"
 
+[lib]
+name = "tkpsql"
+path = "src/lib.rs"
+
 [dependencies]
 common = { path = "../common" }
 clap = { version = "4", features = ["derive"] }

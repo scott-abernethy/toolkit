@@ -1,7 +1,9 @@
 mod msql;
 
 use clap::{Parser, Subcommand};
+use common::protocol::Request;
 use common::{exit_with_error, Result};
+use serde_json::json;
 
 #[derive(Parser)]
 #[command(
@@ -12,6 +14,11 @@ struct Cli {
     /// Named connection from config (e.g. onprem, prod). Required if multiple connections are configured.
     #[arg(long, global = true)]
     conn: Option<String>,
+
+    /// Call the library directly instead of routing through the daemon.
+    /// Requires read access to the toolkit config file.
+    #[arg(long, global = true)]
+    direct: bool,
 
     #[command(subcommand)]
     command: Commands,
@@ -45,14 +52,30 @@ fn print_json(v: &impl serde::Serialize) {
 
 async fn run() -> Result<()> {
     let cli = Cli::parse();
-    let config = msql::load_config(cli.conn.as_deref())?;
 
-    let result = match cli.command {
-        Commands::Query { sql } => msql::run_query(&config, &sql).await?,
-        Commands::Tables { schema } => msql::list_tables(&config, &schema).await?,
-        Commands::Describe { table } => msql::describe_table(&config, &table).await?,
-    };
-    print_json(&result);
+    if cli.direct {
+        let config = msql::load_config(cli.conn.as_deref())?;
+        let result = match cli.command {
+            Commands::Query { sql } => msql::run_query(&config, &sql).await?,
+            Commands::Tables { schema } => msql::list_tables(&config, &schema).await?,
+            Commands::Describe { table } => msql::describe_table(&config, &table).await?,
+        };
+        print_json(&result);
+    } else {
+        let (op, params) = match &cli.command {
+            Commands::Query { sql } => ("query", json!({"sql": sql})),
+            Commands::Tables { schema } => ("tables", json!({"schema": schema})),
+            Commands::Describe { table } => ("describe", json!({"table": table})),
+        };
+        let req = Request {
+            tool: "msql".to_owned(),
+            conn: cli.conn,
+            op: op.to_owned(),
+            params,
+        };
+        let result = common::client::send(&req)?;
+        print_json(&result);
+    }
     Ok(())
 }
 
@@ -62,3 +85,4 @@ async fn main() {
         exit_with_error(e);
     }
 }
+

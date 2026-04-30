@@ -1,6 +1,8 @@
+pub mod client;
 pub mod config;
 pub mod error;
 pub mod key;
+pub mod protocol;
 pub mod sql;
 
 use serde::Serialize;

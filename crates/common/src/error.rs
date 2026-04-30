@@ -23,6 +23,8 @@ pub enum ToolkitError {
     Cli(String),
     /// sops encryption / decryption failure.
     Crypto(String),
+    /// Daemon not reachable via UNIX socket (connection refused / no such file).
+    Daemon(String),
     /// Catch-all for cases that don't fit the other variants.
     Other(String),
 }
@@ -39,6 +41,7 @@ impl ToolkitError {
             | Self::WriteDenied(m)
             | Self::Cli(m)
             | Self::Crypto(m)
+            | Self::Daemon(m)
             | Self::Other(m) => m,
         }
     }
@@ -66,6 +69,9 @@ impl ToolkitError {
     }
     pub fn crypto(msg: impl Into<String>) -> Self {
         Self::Crypto(msg.into())
+    }
+    pub fn daemon(msg: impl Into<String>) -> Self {
+        Self::Daemon(msg.into())
     }
     pub fn other(msg: impl Into<String>) -> Self {
         Self::Other(msg.into())

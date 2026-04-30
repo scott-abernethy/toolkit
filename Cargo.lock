@@ -2144,6 +2144,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "toolkit-daemon"
+version = "0.1.0"
+dependencies = [
+ "common",
+ "libc",
+ "serde",
+ "serde_json",
+ "tkdbr",
+ "tkmsql",
+ "tkpsql",
+ "tokio",
+]
+
+[[package]]
 name = "tracing"
 version = "0.1.44"
 source = "registry+https://github.com/rust-lang/crates.io-index"
