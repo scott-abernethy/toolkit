@@ -39,15 +39,21 @@ enum Commands {
     },
 }
 
+fn print_json(v: &impl serde::Serialize) {
+    println!("{}", serde_json::to_string(v).unwrap());
+}
+
 fn run() -> Result<()> {
     let cli = Cli::parse();
     let config = psql::load_config(cli.conn.as_deref())?;
 
-    match cli.command {
-        Commands::Query { sql } => psql::run_query(&config, &sql),
-        Commands::Tables { schema } => psql::list_tables(&config, &schema),
-        Commands::Describe { table } => psql::describe_table(&config, &table),
-    }
+    let result = match cli.command {
+        Commands::Query { sql } => psql::run_query(&config, &sql)?,
+        Commands::Tables { schema } => psql::list_tables(&config, &schema)?,
+        Commands::Describe { table } => psql::describe_table(&config, &table)?,
+    };
+    print_json(&result);
+    Ok(())
 }
 
 fn main() {

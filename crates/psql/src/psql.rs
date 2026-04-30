@@ -209,17 +209,16 @@ fn exec_query(
 // Subcommand implementations
 // ---------------------------------------------------------------------------
 
-pub fn run_query(config: &ConnConfig, sql: &str) -> Result<()> {
+pub fn run_query(config: &ConnConfig, sql: &str) -> Result<QueryResponse> {
     if let Some(table) = sql::detect_write_target(sql) {
         sql::assert_write_allowed(config.writable_tables.as_ref(), &table)?;
     }
     let raw = exec_query(config, sql, &[])?;
     let rows: Vec<Map<String, Value>> = raw.iter().map(row_to_json).collect();
-    QueryResponse::from_rows(rows).print();
-    Ok(())
+    Ok(QueryResponse::from_rows(rows))
 }
 
-pub fn list_tables(config: &ConnConfig, schema: &str) -> Result<()> {
+pub fn list_tables(config: &ConnConfig, schema: &str) -> Result<QueryResponse> {
     let raw = exec_query(
         config,
         "SELECT table_name FROM information_schema.tables \
@@ -227,11 +226,10 @@ pub fn list_tables(config: &ConnConfig, schema: &str) -> Result<()> {
         &[&schema],
     )?;
     let rows: Vec<Map<String, Value>> = raw.iter().map(row_to_json).collect();
-    QueryResponse::from_rows(rows).print();
-    Ok(())
+    Ok(QueryResponse::from_rows(rows))
 }
 
-pub fn describe_table(config: &ConnConfig, table: &str) -> Result<()> {
+pub fn describe_table(config: &ConnConfig, table: &str) -> Result<QueryResponse> {
     let (schema, tbl) = if table.contains('.') {
         let parts: Vec<&str> = table.splitn(2, '.').collect();
         (parts[0], parts[1])
@@ -248,6 +246,5 @@ pub fn describe_table(config: &ConnConfig, table: &str) -> Result<()> {
         &[&schema, &tbl],
     )?;
     let rows: Vec<Map<String, Value>> = raw.iter().map(row_to_json).collect();
-    QueryResponse::from_rows(rows).print();
-    Ok(())
+    Ok(QueryResponse::from_rows(rows))
 }

@@ -267,16 +267,15 @@ async fn exec_query(
 // Subcommand implementations
 // ---------------------------------------------------------------------------
 
-pub async fn run_query(config: &ConnConfig, sql: &str) -> Result<()> {
+pub async fn run_query(config: &ConnConfig, sql: &str) -> Result<QueryResponse> {
     if let Some(table) = sql::detect_write_target(sql) {
         sql::assert_write_allowed(config.writable_tables.as_ref(), &table)?;
     }
     let rows = exec_query(config, sql, &[]).await?;
-    QueryResponse::from_rows(rows).print();
-    Ok(())
+    Ok(QueryResponse::from_rows(rows))
 }
 
-pub async fn list_tables(config: &ConnConfig, schema: &str) -> Result<()> {
+pub async fn list_tables(config: &ConnConfig, schema: &str) -> Result<QueryResponse> {
     let rows = exec_query(
         config,
         "SELECT table_name FROM information_schema.tables \
@@ -284,11 +283,10 @@ pub async fn list_tables(config: &ConnConfig, schema: &str) -> Result<()> {
         &[&schema],
     )
     .await?;
-    QueryResponse::from_rows(rows).print();
-    Ok(())
+    Ok(QueryResponse::from_rows(rows))
 }
 
-pub async fn describe_table(config: &ConnConfig, table: &str) -> Result<()> {
+pub async fn describe_table(config: &ConnConfig, table: &str) -> Result<QueryResponse> {
     let (schema, tbl) = if table.contains('.') {
         let parts: Vec<&str> = table.splitn(2, '.').collect();
         (parts[0], parts[1])
@@ -305,6 +303,5 @@ pub async fn describe_table(config: &ConnConfig, table: &str) -> Result<()> {
         &[&schema, &tbl],
     )
     .await?;
-    QueryResponse::from_rows(rows).print();
-    Ok(())
+    Ok(QueryResponse::from_rows(rows))
 }

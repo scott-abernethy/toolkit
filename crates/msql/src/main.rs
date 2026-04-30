@@ -39,15 +39,21 @@ enum Commands {
     },
 }
 
+fn print_json(v: &impl serde::Serialize) {
+    println!("{}", serde_json::to_string(v).unwrap());
+}
+
 async fn run() -> Result<()> {
     let cli = Cli::parse();
     let config = msql::load_config(cli.conn.as_deref())?;
 
-    match cli.command {
-        Commands::Query { sql } => msql::run_query(&config, &sql).await,
-        Commands::Tables { schema } => msql::list_tables(&config, &schema).await,
-        Commands::Describe { table } => msql::describe_table(&config, &table).await,
-    }
+    let result = match cli.command {
+        Commands::Query { sql } => msql::run_query(&config, &sql).await?,
+        Commands::Tables { schema } => msql::list_tables(&config, &schema).await?,
+        Commands::Describe { table } => msql::describe_table(&config, &table).await?,
+    };
+    print_json(&result);
+    Ok(())
 }
 
 #[tokio::main]

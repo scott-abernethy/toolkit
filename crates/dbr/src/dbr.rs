@@ -219,15 +219,11 @@ fn sanitize_cli_error(msg: &str) -> ToolkitError {
     ToolkitError::cli(first_line)
 }
 
-fn print_json(v: &Value) {
-    println!("{}", serde_json::to_string(v).unwrap());
-}
-
 // ---------------------------------------------------------------------------
 // Jobs
 // ---------------------------------------------------------------------------
 
-pub fn jobs_list(config: &ConnConfig, limit: u32) -> Result<()> {
+pub fn jobs_list(config: &ConnConfig, limit: u32) -> Result<Value> {
     let limit_str = limit.to_string();
     let raw = run_databricks(config, &["jobs", "list", "--limit", &limit_str])?;
 
@@ -247,11 +243,10 @@ pub fn jobs_list(config: &ConnConfig, limit: u32) -> Result<()> {
         .unwrap_or_default();
 
     let count = jobs.len();
-    print_json(&json!({"jobs": jobs, "count": count}));
-    Ok(())
+    Ok(json!({"jobs": jobs, "count": count}))
 }
 
-pub fn jobs_get(config: &ConnConfig, job_id: i64) -> Result<()> {
+pub fn jobs_get(config: &ConnConfig, job_id: i64) -> Result<Value> {
     let id_str = job_id.to_string();
     let raw = run_databricks(config, &["jobs", "get", "--job-id", &id_str])?;
 
@@ -272,14 +267,13 @@ pub fn jobs_get(config: &ConnConfig, job_id: i64) -> Result<()> {
         .and_then(|s| s.get("quartz_cron_expression"))
         .cloned();
 
-    print_json(&json!({
+    Ok(json!({
         "id": raw["job_id"],
         "name": raw["settings"]["name"],
         "created_by": raw["creator_user_name"],
         "schedule": schedule,
         "tasks": tasks,
-    }));
-    Ok(())
+    }))
 }
 
 fn task_type(task: &Value) -> &str {
@@ -302,7 +296,7 @@ fn task_type(task: &Value) -> &str {
     }
 }
 
-pub fn jobs_trigger(config: &ConnConfig, job_id: i64) -> Result<()> {
+pub fn jobs_trigger(config: &ConnConfig, job_id: i64) -> Result<Value> {
     if !config.can_trigger_runs() {
         return Err(ToolkitError::permission(
             "triggering job runs is not permitted for this connection \
@@ -311,15 +305,14 @@ pub fn jobs_trigger(config: &ConnConfig, job_id: i64) -> Result<()> {
     }
     let id_str = job_id.to_string();
     let raw = run_databricks(config, &["jobs", "run-now", "--job-id", &id_str])?;
-    print_json(&json!({"run_id": raw["run_id"], "ok": true}));
-    Ok(())
+    Ok(json!({"run_id": raw["run_id"], "ok": true}))
 }
 
 // ---------------------------------------------------------------------------
 // Runs
 // ---------------------------------------------------------------------------
 
-pub fn runs_list(config: &ConnConfig, job_id: i64, limit: u32) -> Result<()> {
+pub fn runs_list(config: &ConnConfig, job_id: i64, limit: u32) -> Result<Value> {
     let id_str = job_id.to_string();
     let limit_str = limit.to_string();
     let raw = run_databricks(
@@ -334,15 +327,13 @@ pub fn runs_list(config: &ConnConfig, job_id: i64, limit: u32) -> Result<()> {
         .unwrap_or_default();
 
     let count = runs.len();
-    print_json(&json!({"runs": runs, "count": count}));
-    Ok(())
+    Ok(json!({"runs": runs, "count": count}))
 }
 
-pub fn runs_get(config: &ConnConfig, run_id: i64) -> Result<()> {
+pub fn runs_get(config: &ConnConfig, run_id: i64) -> Result<Value> {
     let id_str = run_id.to_string();
     let raw = run_databricks(config, &["runs", "get", "--run-id", &id_str])?;
-    print_json(&compact_run(&raw));
-    Ok(())
+    Ok(compact_run(&raw))
 }
 
 /// Compact run representation: drop all scheduling/cluster/task detail, keep status + timing.
@@ -366,7 +357,7 @@ fn compact_run(r: &Value) -> Value {
     })
 }
 
-pub fn runs_output(config: &ConnConfig, run_id: i64) -> Result<()> {
+pub fn runs_output(config: &ConnConfig, run_id: i64) -> Result<Value> {
     let id_str = run_id.to_string();
     let raw = run_databricks(config, &["runs", "get-output", "--run-id", &id_str])?;
 
@@ -397,22 +388,21 @@ pub fn runs_output(config: &ConnConfig, run_id: i64) -> Result<()> {
         .filter(|s| !s.is_empty())
         .map(|s| s.to_string());
 
-    print_json(&json!({
+    Ok(json!({
         "run_id": raw["metadata"]["run_id"],
         "state": state["life_cycle_state"],
         "result": state.get("result_state"),
         "notebook_output": notebook_result,
         "error": error_msg,
         "error_trace": error_trace,
-    }));
-    Ok(())
+    }))
 }
 
 // ---------------------------------------------------------------------------
 // Clusters
 // ---------------------------------------------------------------------------
 
-pub fn clusters_list(config: &ConnConfig) -> Result<()> {
+pub fn clusters_list(config: &ConnConfig) -> Result<Value> {
     let raw = run_databricks(config, &["clusters", "list"])?;
 
     // CLI may return a top-level array or an object with a "clusters" key
@@ -423,14 +413,12 @@ pub fn clusters_list(config: &ConnConfig) -> Result<()> {
         .unwrap_or_default();
 
     let count = clusters.len();
-    print_json(&json!({"clusters": clusters, "count": count}));
-    Ok(())
+    Ok(json!({"clusters": clusters, "count": count}))
 }
 
-pub fn clusters_get(config: &ConnConfig, cluster_id: &str) -> Result<()> {
+pub fn clusters_get(config: &ConnConfig, cluster_id: &str) -> Result<Value> {
     let raw = run_databricks(config, &["clusters", "get", "--cluster-id", cluster_id])?;
-    print_json(&compact_cluster(&raw));
-    Ok(())
+    Ok(compact_cluster(&raw))
 }
 
 fn compact_cluster(c: &Value) -> Value {
@@ -456,7 +444,7 @@ fn compact_cluster(c: &Value) -> Value {
 // Warehouses
 // ---------------------------------------------------------------------------
 
-pub fn warehouses_list(config: &ConnConfig) -> Result<()> {
+pub fn warehouses_list(config: &ConnConfig) -> Result<Value> {
     let raw = run_databricks(config, &["warehouses", "list"])?;
 
     // CLI may return a top-level array or an object with a "warehouses" key
@@ -467,14 +455,12 @@ pub fn warehouses_list(config: &ConnConfig) -> Result<()> {
         .unwrap_or_default();
 
     let count = warehouses.len();
-    print_json(&json!({"warehouses": warehouses, "count": count}));
-    Ok(())
+    Ok(json!({"warehouses": warehouses, "count": count}))
 }
 
-pub fn warehouses_get(config: &ConnConfig, warehouse_id: &str) -> Result<()> {
+pub fn warehouses_get(config: &ConnConfig, warehouse_id: &str) -> Result<Value> {
     let raw = run_databricks(config, &["warehouses", "get", "--id", warehouse_id])?;
-    print_json(&compact_warehouse(&raw));
-    Ok(())
+    Ok(compact_warehouse(&raw))
 }
 
 fn compact_warehouse(w: &Value) -> Value {
@@ -491,7 +477,7 @@ fn compact_warehouse(w: &Value) -> Value {
 // Catalogs
 // ---------------------------------------------------------------------------
 
-pub fn catalogs_list(config: &ConnConfig, limit: u32) -> Result<()> {
+pub fn catalogs_list(config: &ConnConfig, limit: u32) -> Result<Value> {
     let limit_str = limit.to_string();
     let raw = run_databricks(config, &["catalogs", "list", "--max-results", &limit_str])?;
 
@@ -512,27 +498,25 @@ pub fn catalogs_list(config: &ConnConfig, limit: u32) -> Result<()> {
         .unwrap_or_default();
 
     let count = catalogs.len();
-    print_json(&json!({"catalogs": catalogs, "count": count}));
-    Ok(())
+    Ok(json!({"catalogs": catalogs, "count": count}))
 }
 
-pub fn catalogs_get(config: &ConnConfig, catalog: &str) -> Result<()> {
+pub fn catalogs_get(config: &ConnConfig, catalog: &str) -> Result<Value> {
     let raw = run_databricks(config, &["catalogs", "get", catalog])?;
 
-    print_json(&json!({
+    Ok(json!({
         "name": raw["name"],
         "owner": raw.get("owner"),
         "created_at": raw.get("created_at"),
         "comment": raw.get("comment"),
-    }));
-    Ok(())
+    }))
 }
 
 // ---------------------------------------------------------------------------
 // Schemas
 // ---------------------------------------------------------------------------
 
-pub fn schemas_list(config: &ConnConfig, catalog: &str, limit: u32) -> Result<()> {
+pub fn schemas_list(config: &ConnConfig, catalog: &str, limit: u32) -> Result<Value> {
     let limit_str = limit.to_string();
     let raw = run_databricks(
         config,
@@ -557,22 +541,20 @@ pub fn schemas_list(config: &ConnConfig, catalog: &str, limit: u32) -> Result<()
         .unwrap_or_default();
 
     let count = schemas.len();
-    print_json(&json!({"schemas": schemas, "count": count}));
-    Ok(())
+    Ok(json!({"schemas": schemas, "count": count}))
 }
 
-pub fn schemas_get(config: &ConnConfig, catalog: &str, schema: &str) -> Result<()> {
+pub fn schemas_get(config: &ConnConfig, catalog: &str, schema: &str) -> Result<Value> {
     let full_name = format!("{}.{}", catalog, schema);
     let raw = run_databricks(config, &["schemas", "get", &full_name])?;
 
-    print_json(&json!({
+    Ok(json!({
         "name": raw["name"],
         "catalog": raw.get("catalog_name"),
         "owner": raw.get("owner"),
         "created_at": raw.get("created_at"),
         "comment": raw.get("comment"),
-    }));
-    Ok(())
+    }))
 }
 
 // ---------------------------------------------------------------------------
@@ -585,7 +567,7 @@ pub fn tables_list(
     schema: &str,
     limit: u32,
     omit_columns: bool,
-) -> Result<()> {
+) -> Result<Value> {
     let limit_str = limit.to_string();
     let mut args = vec![
         "tables",
@@ -635,11 +617,10 @@ pub fn tables_list(
         .unwrap_or_default();
 
     let count = tables.len();
-    print_json(&json!({"tables": tables, "count": count}));
-    Ok(())
+    Ok(json!({"tables": tables, "count": count}))
 }
 
-pub fn tables_get(config: &ConnConfig, catalog: &str, schema: &str, table: &str) -> Result<()> {
+pub fn tables_get(config: &ConnConfig, catalog: &str, schema: &str, table: &str) -> Result<Value> {
     let full_name = format!("{}.{}.{}", catalog, schema, table);
     let raw = run_databricks(config, &["tables", "get", &full_name])?;
 
@@ -656,7 +637,7 @@ pub fn tables_get(config: &ConnConfig, catalog: &str, schema: &str, table: &str)
             .collect::<Vec<_>>()
     });
 
-    print_json(&json!({
+    Ok(json!({
         "name": raw["name"],
         "catalog": raw.get("catalog_name"),
         "schema": raw.get("schema_name"),
@@ -665,8 +646,7 @@ pub fn tables_get(config: &ConnConfig, catalog: &str, schema: &str, table: &str)
         "created_at": raw.get("created_at"),
         "comment": raw.get("comment"),
         "columns": columns,
-    }));
-    Ok(())
+    }))
 }
 
 // ---------------------------------------------------------------------------
@@ -676,7 +656,7 @@ pub fn tables_get(config: &ConnConfig, catalog: &str, schema: &str, table: &str)
 /// Run `databricks auth login --host <host>` interactively, inheriting stdio.
 /// Writes OAuth credentials to DATABRICKS_CONFIG_FILE under DATABRICKS_CONFIG_PROFILE,
 /// so all subsequent tkdbr commands find them without a manually created ~/.databrickscfg.
-pub fn auth_login(config: &ConnConfig) -> Result<()> {
+pub fn auth_login(config: &ConnConfig) -> Result<Value> {
     let host = config
         .env
         .get("DATABRICKS_HOST")
@@ -691,8 +671,7 @@ pub fn auth_login(config: &ConnConfig) -> Result<()> {
         .map_err(|e| ToolkitError::cli(format!("Failed to run databricks CLI: {}", e)))?;
 
     if output.status.success() {
-        println!("{{\"ok\": true}}");
-        Ok(())
+        Ok(json!({"ok": true}))
     } else {
         let msg = String::from_utf8_lossy(&output.stderr);
         Err(ToolkitError::cli(msg.trim().to_string()))
@@ -868,7 +847,7 @@ pub fn query(
     sql: &str,
     warehouse_id: Option<&str>,
     limit: u32,
-) -> Result<()> {
+) -> Result<Value> {
     let wh_id = warehouse_id.or(config.warehouse_id()).ok_or_else(|| {
         ToolkitError::config(
             "no warehouse_id: pass --warehouse-id or set DATABRICKS_WAREHOUSE_ID in config env",
@@ -893,7 +872,7 @@ pub fn query(
     let raw = run_databricks_api_post(config, "/api/2.0/sql/statements", &body)?;
 
     let result = poll_until_done(config, raw)?;
-    print_query_result(&result)
+    build_query_result(&result)
 }
 
 /// Check if SQL already contains a LIMIT clause (simple heuristic).
@@ -919,24 +898,20 @@ fn poll_until_done(config: &ConnConfig, initial: Value) -> Result<Value> {
 
     let poll_path = format!("/api/2.0/sql/statements/{}", statement_id);
 
-    eprint!("waiting");
     for _ in 0..QUERY_MAX_POLLS {
         thread::sleep(QUERY_POLL_INTERVAL);
-        eprint!(".");
 
         let resp = run_databricks_api_get(config, &poll_path)?;
         let state = resp["status"]["state"].as_str().unwrap_or("UNKNOWN");
 
         match state {
             "SUCCEEDED" | "FAILED" | "CANCELED" | "CLOSED" => {
-                eprintln!();
                 return Ok(resp);
             }
             _ => continue,
         }
     }
 
-    eprintln!();
     Err(ToolkitError::other(format!(
         "query timed out after {}s (statement_id: {})",
         QUERY_MAX_POLLS as u64 * QUERY_POLL_INTERVAL.as_secs(),
@@ -944,8 +919,8 @@ fn poll_until_done(config: &ConnConfig, initial: Value) -> Result<Value> {
     )))
 }
 
-/// Format and print query results as compact JSON.
-fn print_query_result(raw: &Value) -> Result<()> {
+/// Build compact query results as a JSON value.
+fn build_query_result(raw: &Value) -> Result<Value> {
     let state = raw["status"]["state"].as_str().unwrap_or("UNKNOWN");
 
     if state != "SUCCEEDED" {
@@ -993,29 +968,26 @@ fn print_query_result(raw: &Value) -> Result<()> {
         result["truncated"] = json!(true);
     }
 
-    print_json(&result);
-    Ok(())
+    Ok(result)
 }
 
 // ---------------------------------------------------------------------------
 // Bundles
 // ---------------------------------------------------------------------------
 
-pub fn bundle_validate(config: &ConnConfig) -> Result<()> {
+pub fn bundle_validate(config: &ConnConfig) -> Result<Value> {
     let target = config.get_bundle_target();
     run_databricks_no_json(config, &["bundle", "validate", "-t", &target])?;
-    print_json(&json!({"ok": true}));
-    Ok(())
+    Ok(json!({"ok": true}))
 }
 
-pub fn bundle_deploy(config: &ConnConfig) -> Result<()> {
+pub fn bundle_deploy(config: &ConnConfig) -> Result<Value> {
     let target = config.get_bundle_target();
     run_databricks_no_json(config, &["bundle", "deploy", "-t", &target])?;
-    print_json(&json!({"ok": true}));
-    Ok(())
+    Ok(json!({"ok": true}))
 }
 
-pub fn bundle_run(config: &ConnConfig, name: &str, only: Option<&str>) -> Result<()> {
+pub fn bundle_run(config: &ConnConfig, name: &str, only: Option<&str>) -> Result<Value> {
     let target = config.get_bundle_target();
     let mut args = vec!["bundle", "run", name, "-t", &target, "--no-wait"];
 
@@ -1035,9 +1007,8 @@ pub fn bundle_run(config: &ConnConfig, name: &str, only: Option<&str>) -> Result
         .and_then(|line| line.split("/run/").last().map(|id| id.trim().to_string()));
 
     if let Some(id) = run_id {
-        print_json(&json!({"ok": true, "run_id": id}));
+        Ok(json!({"ok": true, "run_id": id}))
     } else {
-        print_json(&json!({"ok": true}));
+        Ok(json!({"ok": true}))
     }
-    Ok(())
 }

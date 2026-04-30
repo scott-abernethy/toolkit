@@ -101,10 +101,6 @@ impl QueryResponse {
         let count = rows.len();
         Self { rows, count }
     }
-
-    pub fn print(self) {
-        println!("{}", serde_json::to_string(&self).unwrap());
-    }
 }
 
 // ---------------------------------------------------------------------------
