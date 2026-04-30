@@ -172,6 +172,8 @@ fn run_databricks_api_post(config: &ConnConfig, path: &str, body: &Value) -> Val
 
     // Inject credentials via env vars — no external config files needed
     cmd.envs(&config.env);
+    cmd.env("DATABRICKS_CONFIG_FILE", dbr_config_file());
+    cmd.env("DATABRICKS_CONFIG_PROFILE", &config.conn_name);
 
     let output = cmd
         .output()
@@ -200,6 +202,8 @@ fn run_databricks_api_get(config: &ConnConfig, path: &str) -> Value {
 
     // Inject credentials via env vars — no external config files needed
     cmd.envs(&config.env);
+    cmd.env("DATABRICKS_CONFIG_FILE", dbr_config_file());
+    cmd.env("DATABRICKS_CONFIG_PROFILE", &config.conn_name);
 
     let output = cmd
         .output()
