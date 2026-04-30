@@ -220,15 +220,25 @@ This is out of scope for the daemon itself but is a natural next layer.
 
 ## Databricks OAuth login (`toolkit dbr login`)
 
-`tkdbr auth login` has been moved to the `toolkit` admin binary as `toolkit dbr login`. This is because the OAuth browser flow is interactive (it pops a browser for the user) and cannot be dispatched through the daemon.
+`toolkit dbr login` runs the native Databricks OAuth U2M (PKCE) flow entirely in Rust — no `databricks` CLI auth required. It:
 
-Since credentials must live in the `_toolkit` user's config area, `toolkit dbr login` must be run as `_toolkit`:
+1. Generates a PKCE verifier/challenge pair and random state
+2. Prints an authorization URL for the user to open in a browser
+3. Listens locally on port 8020–8030 for the OAuth redirect callback
+4. Exchanges the code for access + refresh tokens
+5. Saves tokens to `$HOME/.config/toolkit/dbr-oauth/<conn>.json` (mode 0600)
+
+Tokens are auto-refreshed before expiry by `get_effective_token`, so `toolkit dbr login` only needs to be re-run when the refresh token expires (typically after 30–90 days depending on workspace policy).
+
+Since credentials must live in the `_toolkit` user's config area, run as `_toolkit` after daemon setup:
 
 ```sh
 sudo -u _toolkit env HOME=/var/lib/toolkit toolkit dbr login --conn dev
 ```
 
-This writes OAuth credentials to `/var/lib/toolkit/.config/toolkit/tkdbr-config`, where the daemon can find them. The `toolkit` binary has agent-detection protection — agents cannot invoke it.
+Token files are stored at `/var/lib/toolkit/.config/toolkit/dbr-oauth/<conn>.json` (readable only by `_toolkit`).
+
+The `toolkit` binary has agent-detection protection — agents cannot invoke it directly.
 
 ## Known limitations
 

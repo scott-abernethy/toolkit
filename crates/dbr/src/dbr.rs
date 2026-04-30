@@ -54,15 +54,75 @@ pub fn load_config(conn: Option<&str>) -> Result<ConnConfig> {
 // CLI invocation
 // ---------------------------------------------------------------------------
 
-/// Path to the toolkit-managed databricks config file.
-/// Credentials written here by `tkdbr auth login`; read by all subsequent calls.
-fn dbr_config_file() -> String {
-    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-    format!("{}/.config/toolkit/tkdbr-config", home)
+/// Get the effective Databricks access token for this connection.
+///
+/// Priority:
+/// 1. PAT from config.env DATABRICKS_TOKEN (non-empty) — used as-is, no refresh
+/// 2. OAuth token file ($HOME/.config/toolkit/dbr-oauth/<conn>.json)
+///    - if near expiry and refresh_token present: refresh via /oidc/v1/token
+///    - if expired with no refresh or failed refresh: return Err
+/// 3. None — no token found (caller proceeds and may get an auth error from CLI)
+pub fn get_effective_token(config: &ConnConfig) -> Result<Option<String>> {
+    // 1. PAT in config
+    if let Some(t) = config.env.get("DATABRICKS_TOKEN") {
+        if !t.is_empty() {
+            return Ok(Some(t.clone()));
+        }
+    }
+
+    // 2. OAuth token file
+    let path = match crate::oauth::token_file_path(&config.conn_name) {
+        Ok(p) => p,
+        Err(_) => return Ok(None),
+    };
+    if !path.exists() {
+        return Ok(None);
+    }
+    let mut tokens = match crate::oauth::read_token_file(&path) {
+        Ok(t) => t,
+        Err(_) => return Ok(None), // corrupted file — don't block
+    };
+
+    if crate::oauth::is_near_expiry(tokens.expires_at) {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
+        if let Some(refresh_token) = tokens.refresh_token.clone() {
+            let host = config
+                .env
+                .get("DATABRICKS_HOST")
+                .ok_or_else(|| ToolkitError::config("DATABRICKS_HOST not set"))?;
+            match crate::oauth::refresh_tokens(host, &refresh_token) {
+                Ok(new_tokens) => {
+                    let _ = crate::oauth::write_token_file(&path, &new_tokens);
+                    tokens = new_tokens;
+                }
+                Err(e) => {
+                    if tokens.expires_at > now {
+                        // Near expiry but still valid — use it
+                    } else {
+                        return Err(ToolkitError::auth(format!(
+                            "Databricks token expired and refresh failed: {}. Run: toolkit dbr login --conn {}",
+                            e, config.conn_name
+                        )));
+                    }
+                }
+            }
+        } else if tokens.expires_at <= now {
+            return Err(ToolkitError::auth(format!(
+                "Databricks token expired. Run: toolkit dbr login --conn {}",
+                config.conn_name
+            )));
+        }
+    }
+
+    Ok(Some(tokens.access_token))
 }
 
 /// Run a `databricks` subcommand and return parsed JSON output.
-/// Global flags (--profile, --output) are prepended; subcommand args follow.
+/// Global flags (--output) are prepended; subcommand args follow.
 fn run_databricks(config: &ConnConfig, args: &[&str]) -> Result<Value> {
     let mut cmd = Command::new("databricks");
 
@@ -71,10 +131,12 @@ fn run_databricks(config: &ConnConfig, args: &[&str]) -> Result<Value> {
     // Subcommand and its args
     cmd.args(args);
 
-    // Inject credentials via env vars — no external config files needed
+    // Inject credentials via env vars; prevent CLI from reading any default config
     cmd.envs(&config.env);
-    cmd.env("DATABRICKS_CONFIG_FILE", dbr_config_file());
-    cmd.env("DATABRICKS_CONFIG_PROFILE", &config.conn_name);
+    cmd.env("DATABRICKS_CONFIG_FILE", "/dev/null");
+    if let Some(token) = get_effective_token(config)? {
+        cmd.env("DATABRICKS_TOKEN", token);
+    }
 
     let output = cmd
         .output()
@@ -104,10 +166,12 @@ fn run_databricks_no_json(config: &ConnConfig, args: &[&str]) -> Result<(String,
     // Subcommand and its args
     cmd.args(args);
 
-    // Inject credentials via env vars — no external config files needed
+    // Inject credentials via env vars; prevent CLI from reading any default config
     cmd.envs(&config.env);
-    cmd.env("DATABRICKS_CONFIG_FILE", dbr_config_file());
-    cmd.env("DATABRICKS_CONFIG_PROFILE", &config.conn_name);
+    cmd.env("DATABRICKS_CONFIG_FILE", "/dev/null");
+    if let Some(token) = get_effective_token(config)? {
+        cmd.env("DATABRICKS_TOKEN", token);
+    }
 
     let output = cmd
         .output()
@@ -138,10 +202,12 @@ fn run_databricks_api_post(config: &ConnConfig, path: &str, body: &Value) -> Res
 
     cmd.args(["api", "post", path, "--json", &body_str]);
 
-    // Inject credentials via env vars — no external config files needed
+    // Inject credentials via env vars; prevent CLI from reading any default config
     cmd.envs(&config.env);
-    cmd.env("DATABRICKS_CONFIG_FILE", dbr_config_file());
-    cmd.env("DATABRICKS_CONFIG_PROFILE", &config.conn_name);
+    cmd.env("DATABRICKS_CONFIG_FILE", "/dev/null");
+    if let Some(token) = get_effective_token(config)? {
+        cmd.env("DATABRICKS_TOKEN", token);
+    }
 
     let output = cmd
         .output()
@@ -168,10 +234,12 @@ fn run_databricks_api_get(config: &ConnConfig, path: &str) -> Result<Value> {
 
     cmd.args(["api", "get", path]);
 
-    // Inject credentials via env vars — no external config files needed
+    // Inject credentials via env vars; prevent CLI from reading any default config
     cmd.envs(&config.env);
-    cmd.env("DATABRICKS_CONFIG_FILE", dbr_config_file());
-    cmd.env("DATABRICKS_CONFIG_PROFILE", &config.conn_name);
+    cmd.env("DATABRICKS_CONFIG_FILE", "/dev/null");
+    if let Some(token) = get_effective_token(config)? {
+        cmd.env("DATABRICKS_TOKEN", token);
+    }
 
     let output = cmd
         .output()
@@ -647,35 +715,6 @@ pub fn tables_get(config: &ConnConfig, catalog: &str, schema: &str, table: &str)
         "comment": raw.get("comment"),
         "columns": columns,
     }))
-}
-
-// ---------------------------------------------------------------------------
-// Auth
-// ---------------------------------------------------------------------------
-
-/// Run `databricks auth login --host <host>` interactively, inheriting stdio.
-/// Writes OAuth credentials to DATABRICKS_CONFIG_FILE under DATABRICKS_CONFIG_PROFILE,
-/// so all subsequent tkdbr commands find them without a manually created ~/.databrickscfg.
-pub fn auth_login(config: &ConnConfig) -> Result<Value> {
-    let host = config
-        .env
-        .get("DATABRICKS_HOST")
-        .map(|s| s.as_str())
-        .ok_or_else(|| ToolkitError::config("DATABRICKS_HOST not set in config env"))?;
-
-    let output = Command::new("databricks")
-        .args(["auth", "login", "--host", host, "--profile", &config.conn_name])
-        .envs(&config.env)
-        .env("DATABRICKS_CONFIG_FILE", dbr_config_file())
-        .output()
-        .map_err(|e| ToolkitError::cli(format!("Failed to run databricks CLI: {}", e)))?;
-
-    if output.status.success() {
-        Ok(json!({"ok": true}))
-    } else {
-        let msg = String::from_utf8_lossy(&output.stderr);
-        Err(ToolkitError::cli(msg.trim().to_string()))
-    }
 }
 
 // ---------------------------------------------------------------------------
