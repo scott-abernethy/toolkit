@@ -1,21 +1,29 @@
 # toolkit
 
-A safety kit for your tools — protecting the boundary between AI coding agents and sensitive services.
+A safety kit for your tools — reducing the blast radius and leak surface when AI coding agents touch sensitive services.
 
 ## The Problem
 
-AI coding agents (Claude Code, GitHub Copilot CLI, opencode, etc.) are increasingly useful for interacting with datastores, execution environments, and monitoring systems. Combining access to the system codebase **and** the execution environment enables the agent to explore and iterate rapidly, solving operational problems or implementing features/fixes. But giving an LLM direct access to these services is risky:
+AI coding agents (Claude Code, GitHub Copilot CLI, opencode, etc.) are increasingly useful for interacting with datastores, execution environments, and monitoring systems. Combining access to the system codebase **and** the execution environment enables the agent to explore and iterate rapidly, solving operational problems or implementing features/fixes. The risks toolkit addresses:
 
-- **Accidental harm** — an agent could run destructive queries, trigger unintended jobs, or mutate production data
-- **Credential exposure** — connection strings, tokens, and passwords can leak into agent context, logs, or conversation history
+- **Accidental harm** — a well-meaning agent runs a destructive query, triggers an unintended job, or mutates production data
+- **Credential leak surface** — connection strings, tokens, and passwords end up in agent context, prompt logs, conversation history, or backups
 - **Token waste** — upstream APIs return verbose responses that burn through context windows
+
+## Threat Model
+
+Be specific about what toolkit is and isn't:
+
+- **Primary use case**: protecting against an *agent's mistakes* — accidental writes, exploratory queries that hit prod, leaking credentials by reading the wrong file. Toolkit raises the floor here meaningfully.
+- **Not a sandbox**: toolkit runs as the same OS user as the agent, so an agent that *wants* to read `~/.config/sops/age/keys.txt` or invoke `sops` directly can. A truly hostile agent needs OS-level isolation (sandbox-exec, user namespaces, a separate shell user) — toolkit doesn't provide that.
+- **Defence is layered**: toolkit's protections work in combination with (a) harness denylists like `Bash(toolkit:*)` and `Bash(sops:*)`, (b) per-tool agent hooks that block access to `~/.config/toolkit` and `~/.config/sops`, and (c) DB-side GRANTs / read-only roles. Treat toolkit's own checks as defence-in-depth on top of those, not as the only line.
 
 ## What Toolkit Does
 
 Toolkit is a safety kit that sits between AI agents and upstream services. Each tool in the kit:
 
-1. **Enforces safety boundaries** — read-only by default, with explicit per-connection allowlists for any write or mutating operation. Write detection happens at the tool level, before queries reach the upstream service.
-2. **Hides credentials** — the agent never sees connection strings, passwords, or tokens. Configuration lives in a local file (`~/.config/toolkit/config.yaml`) that the agent doesn't read; the tool loads it internally.
+1. **Enforces a default-deny posture for writes** — Postgres connections are session-level read-only at the server (the strongest control here, enforced by Postgres itself); MS SQL relies on `db_datareader` role. An optional `writable_tables` allowlist enables specific writes; client-side write detection is a sanity check on top of DB-side privileges, not a substitute for them.
+2. **Reduces credential leak surface** — credentials live in a single sops-encrypted file and are injected into wrapped CLIs as env vars at exec time. Agents never see credentials in argv, in their config files, or in tool output. This protects against backups, accidental commits, prompt logs, and incurious agents — not against an agent that decides to read the key file.
 3. **Produces token-efficient output** — compact JSON with no decoration, no verbose metadata envelopes, and sensible default limits. Designed for direct consumption by LLMs.
 4. **Fails safely** — errors are returned as structured JSON (not stack traces), with credentials scrubbed from error messages.
 
@@ -50,7 +58,7 @@ Toolkit has two kinds of tool: **native clients** that implement protocol-level 
 | Binary   | Upstream Service | What It Provides |
 |----------|-----------------|------------------|
 | `tkpsql` | PostgreSQL | Query, describe tables, list schemas. Read-only by default (session-level enforcement); optional per-table write allowlists. |
-| `tkmsql` | MS SQL Server | Query, describe tables, list schemas. Read-only via write detection and `db_datareader` role; optional per-table write allowlists. Supports on-prem servers with self-signed certs (`trust_cert`). |
+| `tkmsql` | MS SQL Server | Query, describe tables, list schemas. Read-only enforced via `db_datareader` role (configure your DB user accordingly); optional per-table write allowlists. Supports on-prem servers with self-signed certs (`trust_cert`). |
 | `tkdbr`  | Databricks | Unity Catalog exploration, SQL queries, job/cluster/warehouse inspection, bundle management. Job triggering requires explicit opt-in. |
 
 Native clients earn their complexity — `tkpsql` enforces read-only at the Postgres session level and does type-aware JSON conversion; `tkmsql` provides the same for MS SQL Server via the TDS protocol; `tkdbr` compacts verbose Databricks API responses into token-efficient output. `tkpsql` and `tkmsql` share write-detection and config-loading logic via `common::sql`. These are worth maintaining as dedicated crates because the upstream services need protocol-level handling that a generic wrapper can't provide.
@@ -137,7 +145,7 @@ See [skills/README.md](skills/README.md) for full setup details and troubleshoot
 
 Toolkit occupies a gap in the current ecosystem. Existing approaches each solve part of the problem:
 
-**MCP database servers** ([pgmcp](https://github.com/subnetmarco/pgmcp), [postgres-mcp](https://github.com/crystaldba/postgres-mcp), AWS Aurora MCP) provide gated database access with read-only enforcement, but are limited to basic statement-type filtering, don't shape output for token efficiency, and are tied to the MCP protocol. Their config files (typically JSON) are readable by agents, so credentials remain exposed.
+**MCP database servers** ([pgmcp](https://github.com/subnetmarco/pgmcp), [postgres-mcp](https://github.com/crystaldba/postgres-mcp), AWS Aurora MCP) provide gated database access with read-only enforcement, but typically rely on statement-type filtering rather than DB-side privileges, don't shape output for token efficiency, and are tied to the MCP protocol. When run locally, their config files are also readable by the agent, leaving credentials on disk in the same trust boundary as the agent itself.
 
 **Agent guardrail frameworks** ([LlamaFirewall](https://github.com/meta-llama/PurpleLlama/tree/main/LlamaFirewall), Lakera Guard) focus on prompt injection and code safety analysis — they don't address tool-use gating or credential hiding.
 
@@ -145,9 +153,9 @@ Toolkit occupies a gap in the current ecosystem. Existing approaches each solve 
 
 **What's missing everywhere:**
 
-- **Credential hiding as a first-class feature.** [Research by Knostic](https://www.knostic.ai/blog/claude-cursor-env-file-secret-leakage) documented coding agents silently loading `.env` files and leaking API keys. The industry consensus is to treat agents as untrusted processes, but almost nobody ships tooling for it.
+- **Credential leak-surface reduction as a first-class feature.** [Research by Knostic](https://www.knostic.ai/blog/claude-cursor-env-file-secret-leakage) documented coding agents silently loading `.env` files and leaking API keys. Toolkit puts credentials in one encrypted file and injects them into wrapped CLIs at exec time — closing the casual-leak path (logs, transcripts, backups, accidental commits) without claiming to defeat a determined hostile agent.
 - **Token-efficient output.** Verbose API responses are the norm. Inspiration for this came from [rtk](https://github.com/rtk-ai/rtk).
-- **Semantic write detection.** Every existing solution uses basic statement-type filtering (reject anything that isn't SELECT). Nobody detects writes inside CTEs, function calls with side effects, or schema-qualified edge cases.
+- **DB-side privileges as the control, not statement parsing.** Most existing solutions try to police writes by parsing SQL — a losing arms race against CTEs, side-effecting functions, and dialect quirks. Toolkit defers to the database: Postgres connections enable `default_transaction_read_only` server-side, and MS SQL relies on `db_datareader`. Client-side write detection is present but only as defence-in-depth on top of DB-side privileges.
 - **Protocol independence.** MCP servers only work with MCP-compatible hosts. CLI tools work with any agent harness that can shell out.
 
 The [OWASP AI Agent Security Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/AI_Agent_Security_Cheat_Sheet.html) codifies the practices toolkit implements: least privilege, action sandboxing, approval gates, and audit logging.
