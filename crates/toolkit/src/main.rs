@@ -114,6 +114,23 @@ enum Commands {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true, last = true)]
         args: Vec<String>,
     },
+    /// Databricks admin commands
+    Dbr {
+        #[command(subcommand)]
+        cmd: DbrCmd,
+    },
+}
+
+#[derive(Subcommand)]
+enum DbrCmd {
+    /// Log in to Databricks via OAuth browser flow.
+    /// Must be run as the _toolkit user (e.g. sudo -u _toolkit env HOME=/var/lib/toolkit toolkit dbr login).
+    /// Writes OAuth credentials to $HOME/.config/toolkit/tkdbr-config so the daemon can use them.
+    Login {
+        /// Named connection from config (e.g. dev, prod). Required if multiple connections exist.
+        #[arg(long)]
+        conn: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -224,6 +241,12 @@ fn run() -> Result<i32> {
             }
             guard::run(&config, &args)
         }
+        Commands::Dbr { cmd } => {
+            match cmd {
+                DbrCmd::Login { conn } => cmd_dbr_login(conn.as_deref())?,
+            }
+            Ok(0)
+        }
     }
 }
 
@@ -232,6 +255,13 @@ fn main() {
         Ok(code) => process::exit(code),
         Err(e) => exit_with_error(e),
     }
+}
+
+fn cmd_dbr_login(conn: Option<&str>) -> Result<()> {
+    let config = tkdbr::load_config(conn)?;
+    let result = tkdbr::auth_login(&config)?;
+    println!("{}", serde_json::to_string(&result).unwrap());
+    Ok(())
 }
 
 fn cmd_init() -> Result<()> {

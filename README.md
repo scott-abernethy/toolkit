@@ -64,7 +64,7 @@ Toolkit has two kinds of tool: **native clients** that implement protocol-level 
 
 Native clients earn their complexity — `tkpsql` enforces read-only at the Postgres session level and does type-aware JSON conversion; `tkmsql` provides the same for MS SQL Server via the TDS protocol; `tkdbr` compacts verbose Databricks API responses into token-efficient output. `tkpsql` and `tkmsql` share write-detection and config-loading logic via `common::sql`. These are worth maintaining as dedicated crates because the upstream services need protocol-level handling that a generic wrapper can't provide.
 
-Each native client is a thin CLI over a transport-agnostic library. By default the CLI dispatches to `toolkit-daemon` over a UNIX socket; pass `--direct` to call the library in-process instead (requires read access to the config file). See [docs/daemon.md](docs/daemon.md).
+Each native client is a thin CLI over a transport-agnostic library. The CLI dispatches to `toolkit-daemon` over a UNIX socket; the daemon holds all credentials and calls the library on the agent's behalf. See [docs/daemon.md](docs/daemon.md).
 
 ### Guard (`toolkit guard`)
 
@@ -170,10 +170,9 @@ See [docs/hooks.md](docs/hooks.md) for full instructions, coverage details, and 
 ```sh
 # After setup (see docs/daemon.md):
 tkpsql tables            # routes through the daemon
-tkpsql --direct tables   # bypasses the daemon (requires config read access)
 ```
 
-CLI mode is the install-time default. Daemon mode is opt-in once the `_toolkit` user, config, and launchd/systemd unit are in place. See [docs/daemon.md](docs/daemon.md) for full setup, including peer-UID enforcement details and the `--direct` escape hatch.
+See [docs/daemon.md](docs/daemon.md) for full setup, including peer-UID enforcement details.
 
 ## Landscape & Motivation
 

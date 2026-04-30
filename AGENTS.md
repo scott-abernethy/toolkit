@@ -51,7 +51,7 @@ docs/       # user-facing documentation
 Each native client crate (`psql`, `msql`, `dbr`) ships both a binary and a `lib.rs` exposing transport-agnostic functions:
 
 - Library functions return `Result<T, ToolkitError>` with no stdout side effects — they don't print, log progress, or assume an argv shape.
-- The CLI `main.rs` parses args, calls the library (in `--direct` mode) or sends a JSON request to the daemon (default), and prints the result.
+- The CLI `main.rs` parses args, sends a JSON request to the daemon, and prints the result.
 - `toolkit-daemon` depends on each `tk*` lib and dispatches requests by tool/op name.
 
 Adding a new operation means: add the function to the lib, add a CLI subcommand that calls it, and add a dispatch arm in `crates/daemon/src/dispatch.rs`. The wire protocol (`Request{tool, conn, op, params}`) is the contract between CLI and daemon.
@@ -90,7 +90,7 @@ If one connection is configured, `--conn` is optional; if multiple exist, `--con
 - Bundle operations: `validate`, `deploy`, `run`
 - Commands: `catalogs`, `schemas`, `tables`, `jobs`, `runs`, `clusters`, `warehouses`, `bundle`, `query`, `auth login`
 - Output includes sensible defaults (e.g., `--limit 25` for jobs, `--limit 100` for queries)
-- `auth login` is interactive and must be run with `--direct` (cannot dispatch through the daemon)
+- `auth login` for Databricks OAuth is handled via `toolkit dbr login` (admin command, runs directly in user space)
 
 ### `toolkit guard` (CLI Guard)
 

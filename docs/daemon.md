@@ -156,7 +156,6 @@ sudo systemctl enable --now toolkit-daemon
 ```sh
 # From your agent UID:
 tkpsql tables            # routes through daemon
-tkpsql --direct tables   # bypasses daemon (requires config read access)
 ```
 
 ## Configuration reference
@@ -187,19 +186,19 @@ To require Touch ID for agent-to-daemon connections, use `sudo` as the transport
 
 This is out of scope for the daemon itself but is a natural next layer.
 
-## `--direct` flag
+## Databricks OAuth login (`toolkit dbr login`)
 
-All toolkit CLI tools accept `--direct` to bypass the daemon and call the library
-directly. This requires the calling user to have read access to the config file.
+`tkdbr auth login` has been moved to the `toolkit` admin binary as `toolkit dbr login`. This is because the OAuth browser flow is interactive (it pops a browser for the user) and cannot be dispatched through the daemon.
 
-Use `--direct` for:
-- Initial daemon setup and testing
-- `tkdbr auth login` (interactive browser flow, not suitable for daemon dispatch)
-- Troubleshooting
+Since credentials must live in the `_toolkit` user's config area, `toolkit dbr login` must be run as `_toolkit`:
+
+```sh
+sudo -u _toolkit env HOME=/var/lib/toolkit toolkit dbr login --conn dev
+```
+
+This writes OAuth credentials to `/var/lib/toolkit/.config/toolkit/tkdbr-config`, where the daemon can find them. The `toolkit` binary has agent-detection protection — agents cannot invoke it.
 
 ## Known limitations
 
-- `tkdbr auth login` performs an interactive browser OAuth flow and must be run with
-  `--direct` by the `_toolkit` user directly, not via the daemon.
-- `toolkit-admin` tooling for managing the `_toolkit` config is not yet implemented.
+- `toolkit-admin` tooling for managing the `_toolkit` config is not yet fully implemented.
   Use `sudo -u _toolkit` for initial setup.

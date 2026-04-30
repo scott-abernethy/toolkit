@@ -272,7 +272,6 @@ fn dispatch_dbr_sync(
             };
             to_value_result(tkdbr::tables_get(config, catalog, schema, table))
         }
-        "auth/login" => to_value_result(tkdbr::auth_login(config)),
         "query" => {
             let sql = match str_param(params, "sql") {
                 Ok(s) => s,

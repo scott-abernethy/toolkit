@@ -1,5 +1,3 @@
-mod dbr;
-
 use clap::{Parser, Subcommand};
 use common::protocol::Request;
 use common::{exit_with_error, Result};
@@ -11,11 +9,6 @@ struct Cli {
     /// Named connection from config (e.g. dev, prod). Required if multiple connections are configured.
     #[arg(long, global = true)]
     conn: Option<String>,
-
-    /// Call the library directly instead of routing through the daemon.
-    /// Requires read access to the toolkit config file.
-    #[arg(long, global = true)]
-    direct: bool,
 
     #[command(subcommand)]
     command: Commands,
@@ -62,11 +55,6 @@ enum Commands {
     Bundle {
         #[command(subcommand)]
         cmd: BundleCmd,
-    },
-    /// Authenticate with Databricks (OAuth browser flow)
-    Auth {
-        #[command(subcommand)]
-        cmd: AuthCmd,
     },
     /// Execute a SQL query against a warehouse
     Query {
@@ -223,14 +211,6 @@ enum BundleCmd {
     },
 }
 
-#[derive(Subcommand)]
-enum AuthCmd {
-    /// Log in to Databricks via OAuth browser flow.
-    /// Writes credentials to ~/.config/toolkit/tkdbr-config under a profile
-    /// named after --conn. No manual ~/.databrickscfg setup required.
-    Login,
-}
-
 
 fn print_json(v: &Value) {
     println!("{}", serde_json::to_string(v).unwrap());
@@ -279,9 +259,6 @@ fn command_to_request(conn: Option<String>, command: &Commands) -> Request {
             BundleCmd::Deploy => ("bundle/deploy", json!({})),
             BundleCmd::Run { name, only } => ("bundle/run", json!({"name": name, "only": only})),
         },
-        Commands::Auth { cmd } => match cmd {
-            AuthCmd::Login => ("auth/login", json!({})),
-        },
         Commands::Query { sql, warehouse_id, limit } => (
             "query",
             json!({"sql": sql, "warehouse_id": warehouse_id, "limit": limit}),
@@ -297,69 +274,9 @@ fn command_to_request(conn: Option<String>, command: &Commands) -> Request {
 
 fn run() -> Result<()> {
     let cli = Cli::parse();
-
-    if cli.direct {
-        let config = dbr::load_config(cli.conn.as_deref())?;
-        let result = match cli.command {
-            Commands::Jobs { cmd } => match cmd {
-                JobsCmd::List { limit } => dbr::jobs_list(&config, limit)?,
-                JobsCmd::Get { job_id } => dbr::jobs_get(&config, job_id)?,
-                JobsCmd::Trigger { job_id } => dbr::jobs_trigger(&config, job_id)?,
-            },
-            Commands::Runs { cmd } => match cmd {
-                RunsCmd::List { job_id, limit } => dbr::runs_list(&config, job_id, limit)?,
-                RunsCmd::Get { run_id } => dbr::runs_get(&config, run_id)?,
-                RunsCmd::Output { run_id } => dbr::runs_output(&config, run_id)?,
-            },
-            Commands::Clusters { cmd } => match cmd {
-                ClustersCmd::List => dbr::clusters_list(&config)?,
-                ClustersCmd::Get { cluster_id } => dbr::clusters_get(&config, &cluster_id)?,
-            },
-            Commands::Warehouses { cmd } => match cmd {
-                WarehousesCmd::List => dbr::warehouses_list(&config)?,
-                WarehousesCmd::Get { warehouse_id } => dbr::warehouses_get(&config, &warehouse_id)?,
-            },
-            Commands::Catalogs { cmd } => match cmd {
-                CatalogsCmd::List { limit } => dbr::catalogs_list(&config, limit)?,
-                CatalogsCmd::Get { catalog } => dbr::catalogs_get(&config, &catalog)?,
-            },
-            Commands::Schemas { cmd } => match cmd {
-                SchemasCmd::List { catalog, limit } => dbr::schemas_list(&config, &catalog, limit)?,
-                SchemasCmd::Get { catalog, schema } => dbr::schemas_get(&config, &catalog, &schema)?,
-            },
-            Commands::Tables { cmd } => match cmd {
-                TablesCmd::List {
-                    catalog,
-                    schema,
-                    limit,
-                    omit_columns,
-                } => dbr::tables_list(&config, &catalog, &schema, limit, omit_columns)?,
-                TablesCmd::Get {
-                    catalog,
-                    schema,
-                    table,
-                } => dbr::tables_get(&config, &catalog, &schema, &table)?,
-            },
-            Commands::Bundle { cmd } => match cmd {
-                BundleCmd::Validate => dbr::bundle_validate(&config)?,
-                BundleCmd::Deploy => dbr::bundle_deploy(&config)?,
-                BundleCmd::Run { name, only } => dbr::bundle_run(&config, &name, only.as_deref())?,
-            },
-            Commands::Auth { cmd } => match cmd {
-                AuthCmd::Login => dbr::auth_login(&config)?,
-            },
-            Commands::Query {
-                sql,
-                warehouse_id,
-                limit,
-            } => dbr::query(&config, &sql, warehouse_id.as_deref(), limit)?,
-        };
-        print_json(&result);
-    } else {
-        let req = command_to_request(cli.conn, &cli.command);
-        let result = common::client::send(&req)?;
-        print_json(&result);
-    }
+    let req = command_to_request(cli.conn, &cli.command);
+    let result = common::client::send(&req)?;
+    print_json(&result);
     Ok(())
 }
 
