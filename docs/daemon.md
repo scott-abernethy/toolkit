@@ -34,7 +34,39 @@ config directory is mode `0700`. The agent UID cannot read it.
 
 ## Setup
 
-### 1. Create the `_toolkit` system user
+### Quick start (Homebrew — macOS)
+
+```sh
+# 1. Install toolkit via your private tap
+brew install <tap>/toolkit
+
+# 2. Run the privileged setup script (creates _toolkit user, installs LaunchDaemon)
+sudo $(brew --prefix)/opt/toolkit/libexec/setup-daemon.sh
+
+# 3. Add your connections to the daemon config
+toolkit daemon config edit
+
+# 4. Verify the daemon is running
+toolkit daemon status
+```
+
+The setup script is idempotent — safe to re-run. After `brew upgrade toolkit`,
+re-run it to update the root-owned daemon binary at `/usr/local/bin/toolkit-daemon`.
+
+> **Security note:** The setup script lives in the Homebrew prefix (user-writable).
+> Run it immediately after `brew install` — before starting any agent session — to
+> prevent a hostile agent from tampering with it prior to the `sudo` invocation.
+
+For Databricks OAuth login, run as `_toolkit` after daemon setup:
+```sh
+sudo -u _toolkit env HOME=/var/lib/toolkit toolkit dbr login --conn <name>
+```
+
+---
+
+### Manual setup
+
+#### 1. Create the `_toolkit` system user
 
 **macOS:**
 ```sh
@@ -56,7 +88,7 @@ sudo mkdir -p /var/lib/toolkit
 sudo chown -R _toolkit:_toolkit /var/lib/toolkit
 ```
 
-### 2. Write the config file as `_toolkit`
+#### 2. Write the config file as `_toolkit`
 
 ```sh
 sudo -u _toolkit mkdir -p /var/lib/toolkit/.config/toolkit
@@ -91,7 +123,7 @@ sudo chown _toolkit:_toolkit /var/lib/toolkit/.config/toolkit/config.yaml
 sudo chmod 600 /var/lib/toolkit/.config/toolkit/config.yaml
 ```
 
-### 3. Install the daemon binary
+#### 3. Install the daemon binary
 
 ```sh
 cargo build --release -p toolkit-daemon
@@ -99,7 +131,7 @@ sudo cp target/release/toolkit-daemon /usr/local/bin/toolkit-daemon
 sudo chown root:root /usr/local/bin/toolkit-daemon
 ```
 
-### 4. Start the daemon
+#### 4. Start the daemon
 
 **macOS — launchd plist** (`/Library/LaunchDaemons/com.toolkit.daemon.plist`):
 
@@ -151,7 +183,7 @@ WantedBy=multi-user.target
 sudo systemctl enable --now toolkit-daemon
 ```
 
-### 5. Verify
+#### 5. Verify
 
 ```sh
 # From your agent UID:

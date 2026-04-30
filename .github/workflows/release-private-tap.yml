@@ -57,12 +57,16 @@ jobs:
       - name: Package binaries
         run: |
           set -euo pipefail
-          mkdir -p dist/bin
-          cp "target/${TARGET}/release/toolkit" dist/bin/
-          cp "target/${TARGET}/release/tkpsql" dist/bin/
-          cp "target/${TARGET}/release/tkmsql" dist/bin/
-          cp "target/${TARGET}/release/tkdbr" dist/bin/
-          tar -C dist -czf "toolkit-${VERSION}-${ASSET_SUFFIX}.tar.gz" bin
+          mkdir -p dist/libexec
+          cp "target/${TARGET}/release/toolkit"        dist/
+          cp "target/${TARGET}/release/tkpsql"         dist/
+          cp "target/${TARGET}/release/tkmsql"         dist/
+          cp "target/${TARGET}/release/tkdbr"          dist/
+          cp "target/${TARGET}/release/toolkit-daemon" dist/
+          cp scripts/setup-daemon.sh dist/libexec/setup-daemon.sh
+          chmod +x dist/libexec/setup-daemon.sh
+          tar -C dist -czf "toolkit-${VERSION}-${ASSET_SUFFIX}.tar.gz" \
+            toolkit tkpsql tkmsql tkdbr toolkit-daemon libexec
           shasum -a 256 "toolkit-${VERSION}-${ASSET_SUFFIX}.tar.gz" > "toolkit-${VERSION}-${ASSET_SUFFIX}.tar.gz.sha256"
 
       - uses: actions/upload-artifact@v4

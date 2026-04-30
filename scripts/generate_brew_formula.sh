@@ -80,6 +80,32 @@ class Toolkit < Formula
     bin.install "tkpsql"
     bin.install "tkmsql"
     bin.install "tkdbr"
+    bin.install "toolkit-daemon"
+    libexec.install "libexec/setup-daemon.sh"
+  end
+
+  def caveats
+    <<~EOS
+      To set up the daemon (creates _toolkit system user, installs LaunchDaemon):
+
+        sudo #{opt_libexec}/setup-daemon.sh
+
+      Then add your connections to the daemon config:
+
+        toolkit daemon config edit
+
+      Verify the daemon is running:
+
+        toolkit daemon status
+
+      After \`brew upgrade toolkit\`, re-run the setup script to update the daemon binary:
+
+        sudo #{opt_libexec}/setup-daemon.sh
+
+      For Databricks OAuth login, run as _toolkit after daemon setup:
+
+        sudo -u _toolkit env HOME=/var/lib/toolkit toolkit dbr login --conn <name>
+    EOS
   end
 
   test do
