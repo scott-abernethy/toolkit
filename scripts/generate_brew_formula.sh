@@ -84,13 +84,13 @@ class Toolkit < Formula
     libexec.install "libexec/setup-daemon.sh"
   end
 
+  def post_install
+    system "sudo", "#{opt_libexec}/setup-daemon.sh"
+  end
+
   def caveats
     <<~EOS
-      To set up the daemon (creates _toolkit system user, installs LaunchDaemon):
-
-        sudo #{opt_libexec}/setup-daemon.sh
-
-      Then add your connections to the daemon config:
+      The daemon setup script was run automatically. Add your connections:
 
         toolkit daemon config edit
 
@@ -98,13 +98,9 @@ class Toolkit < Formula
 
         toolkit daemon status
 
-      After \`brew upgrade toolkit\`, re-run the setup script to update the daemon binary:
-
-        sudo #{opt_libexec}/setup-daemon.sh
-
       For Databricks OAuth login, run as _toolkit after daemon setup:
 
-        sudo -u _toolkit env HOME=/var/lib/toolkit toolkit dbr login --conn <name>
+        sudo -u _toolkit env HOME=/var/lib/toolkit tkdbr --conn <name> auth login
     EOS
   end
 
