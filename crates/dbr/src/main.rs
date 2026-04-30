@@ -260,6 +260,15 @@ fn cmd_auth_login(conn: Option<&str>) -> Result<()> {
     );
 
     eprintln!("Open this URL in your browser:\n\n  {}\n", auth_url);
+    // Try to open the browser automatically; fall back to printing the URL
+    let opened = if cfg!(target_os = "macos") {
+        std::process::Command::new("open").arg(&auth_url).status().map(|s| s.success()).unwrap_or(false)
+    } else {
+        std::process::Command::new("xdg-open").arg(&auth_url).status().map(|s| s.success()).unwrap_or(false)
+    };
+    if !opened {
+        eprintln!("Open this URL in your browser:\n\n  {}\n", auth_url);
+    }
     eprintln!("Waiting for authentication (5 minute timeout)...");
 
     let code = tkdbr::oauth::wait_for_callback(
