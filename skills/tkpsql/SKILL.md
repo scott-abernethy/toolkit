@@ -6,7 +6,7 @@ compatibility: opencode
 
 ## What I do
 
-- Query PostgreSQL databases configured in `~/.config/toolkit/config.toml`
+- Query PostgreSQL databases via named connections configured in toolkit
 - List tables and schemas without needing to write raw SQL
 - Describe table schemas to understand column names and types
 - Execute SELECT queries safely (write operations rejected by default)
@@ -41,7 +41,7 @@ tkpsql --conn staging tables --schema analytics
 **Output:** Compact JSON with table names
 
 ```json
-{"tables": ["users", "orders", "products"], "count": 3}
+{"rows": [{"table_name": "orders"}, {"table_name": "products"}, {"table_name": "users"}], "count": 3}
 ```
 
 ### Describe a table
@@ -55,10 +55,10 @@ tkpsql --conn staging describe --table analytics.fact_orders
 
 ```json
 {
-  "columns": [
-    {"name": "id", "type": "bigint", "nullable": false},
-    {"name": "email", "type": "text", "nullable": false},
-    {"name": "created_at", "type": "timestamp", "nullable": true}
+  "rows": [
+    {"column_name": "id", "data_type": "bigint", "is_nullable": "NO", "column_default": null},
+    {"column_name": "email", "data_type": "text", "is_nullable": "NO", "column_default": null},
+    {"column_name": "created_at", "data_type": "timestamp without time zone", "is_nullable": "YES", "column_default": null}
   ],
   "count": 3
 }

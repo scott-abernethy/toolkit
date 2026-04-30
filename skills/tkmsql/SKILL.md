@@ -6,7 +6,7 @@ compatibility: opencode
 
 ## What I do
 
-- Query MS SQL Server databases configured in `~/.config/toolkit/config.yaml`
+- Query MS SQL Server databases via named connections configured in toolkit
 - List tables and schemas without needing to write raw SQL
 - Describe table schemas to understand column names and types
 - Execute SELECT queries safely (write and DDL operations rejected by default)

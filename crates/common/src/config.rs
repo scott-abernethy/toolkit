@@ -64,7 +64,7 @@ pub fn load_section<T: DeserializeOwned>(section: &str) -> T {
     let path = config_path();
 
     let contents = std::fs::read_to_string(&path).unwrap_or_else(|e| {
-        exit_with_error(format!("Failed to read config {}: {}", path.display(), e))
+        exit_with_error(format!("config not found or unreadable: {}", e))
     });
 
     let probe: serde_yaml::Value = serde_yaml::from_str(&contents)
