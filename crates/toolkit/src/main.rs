@@ -5,11 +5,6 @@ use common::{config, key};
 use secrecy::ExposeSecret;
 use std::process;
 
-/// Only encrypt fields that contain credentials. Structure and non-sensitive
-/// values (port, tls, allow_job_runs, etc.) remain readable in the encrypted file.
-const ENCRYPTED_REGEX: &str =
-    "^(host|database|user|password|token|DATABRICKS_HOST|DATABRICKS_TOKEN|DATABRICKS_ACCOUNT_ID)$";
-
 /// Default environment variables set by known AI agent harnesses.
 /// If any are present, toolkit refuses to run — agents must not be able to
 /// invoke key/config management commands (e.g. `toolkit config show` would
@@ -369,12 +364,25 @@ fn cmd_config_edit() {
     // file is present, encrypt it in-place first. New (non-existent) files are
     // seeded with a default template before sops opens the editor.
     if !path.exists() {
-        let template = "# Toolkit config. Managed by `toolkit config edit`. Sensitive data encrypted.\ninstall_path: \"$HOME/.local/bin\"\n\nharness_detection:\n  env:\n    - CLAUDECODE\n    - OPENCODE\n    - COPILOT_CLI\n    - COPILOT_RUN_APP\n";
+        let template = format!(
+            "# Toolkit config. Managed by `toolkit config edit`. Sensitive data encrypted.\n\
+             install_path: \"$HOME/.local/bin\"\n\
+             encrypted_regex: \"{}\"\n\n\
+             harness_detection:\n  \
+             env:\n    \
+             - CLAUDECODE\n    \
+             - OPENCODE\n    \
+             - COPILOT_CLI\n    \
+             - COPILOT_RUN_APP\n",
+            config::DEFAULT_ENCRYPTED_REGEX
+        );
         std::fs::write(&path, template).unwrap_or_else(|e| {
             eprintln!("Failed to write default config: {}", e);
             process::exit(1);
         });
     }
+
+    let encrypted_regex = config::load_encrypted_regex();
 
     if path.exists() {
         let contents = std::fs::read_to_string(&path).unwrap_or_default();
@@ -382,7 +390,7 @@ fn cmd_config_edit() {
             serde_yaml::from_str(&contents).unwrap_or(serde_yaml::Value::Null);
         if !config::is_encrypted(&probe) {
             let status = process::Command::new("sops")
-                .args(["--encrypt", "--encrypted-regex", ENCRYPTED_REGEX, "-i"])
+                .args(["--encrypt", "--encrypted-regex", &encrypted_regex, "-i"])
                 .arg(&path)
                 .env("SOPS_AGE_RECIPIENTS", &public_key)
                 .status()
@@ -397,7 +405,7 @@ fn cmd_config_edit() {
     }
 
     let status = process::Command::new("sops")
-        .args(["--encrypted-regex", ENCRYPTED_REGEX])
+        .args(["--encrypted-regex", &encrypted_regex])
         .arg(&path)
         .env("SOPS_AGE_KEY", key.expose_secret())
         .env("SOPS_AGE_RECIPIENTS", &public_key)
@@ -445,8 +453,9 @@ fn cmd_config_encrypt() {
         process::exit(1);
     });
 
+    let encrypted_regex = config::load_encrypted_regex();
     let status = process::Command::new("sops")
-        .args(["--encrypt", "--encrypted-regex", ENCRYPTED_REGEX, "-i"])
+        .args(["--encrypt", "--encrypted-regex", &encrypted_regex, "-i"])
         .arg(&path)
         .env("SOPS_AGE_RECIPIENTS", &public_key)
         .status()
@@ -554,9 +563,11 @@ fn cmd_config_migrate() {
         process::exit(status.code().unwrap_or(1));
     }
 
-    // Re-encrypt with current ENCRYPTED_REGEX
+    // Re-encrypt with the regex now in the (decrypted) config — picks up any
+    // edit the user made to `encrypted_regex` since the last encryption.
+    let encrypted_regex = config::load_encrypted_regex();
     let status = process::Command::new("sops")
-        .args(["--encrypt", "--encrypted-regex", ENCRYPTED_REGEX, "-i"])
+        .args(["--encrypt", "--encrypted-regex", &encrypted_regex, "-i"])
         .arg(&path)
         .env("SOPS_AGE_RECIPIENTS", &public_key)
         .status()
@@ -569,7 +580,7 @@ fn cmd_config_migrate() {
     }
 
     println!("Migrated: {}", path.display());
-    println!("Encrypted fields: {}", ENCRYPTED_REGEX);
+    println!("Encrypted fields: {}", encrypted_regex);
 }
 
 fn cmd_config_show() {

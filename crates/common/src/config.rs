@@ -3,6 +3,31 @@ use serde::de::DeserializeOwned;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+/// Default sops encrypted-fields pattern. Encrypts only fields that commonly
+/// contain credentials. Override in config via top-level `encrypted_regex`.
+pub const DEFAULT_ENCRYPTED_REGEX: &str =
+    "^(host|database|user|password|token|DATABRICKS_HOST|DATABRICKS_TOKEN|DATABRICKS_ACCOUNT_ID)$";
+
+/// Read the encrypted-regex pattern from config, falling back to the default.
+///
+/// The pattern itself is plaintext metadata — not matched by any reasonable
+/// pattern — so we read it from the file without decryption.
+pub fn load_encrypted_regex() -> String {
+    let path = config_path();
+    let Ok(contents) = std::fs::read_to_string(&path) else {
+        return DEFAULT_ENCRYPTED_REGEX.to_string();
+    };
+    let value: serde_yaml::Value = match serde_yaml::from_str(&contents) {
+        Ok(v) => v,
+        Err(_) => return DEFAULT_ENCRYPTED_REGEX.to_string(),
+    };
+    value
+        .get("encrypted_regex")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| DEFAULT_ENCRYPTED_REGEX.to_string())
+}
+
 /// Resolve the config file path.
 /// Checks `TOOLKIT_CONFIG` env var first, then falls back to
 /// `~/.config/toolkit/config.yaml`.
