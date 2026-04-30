@@ -1,5 +1,7 @@
 # Usage
 
+`tkpsql`, `tkmsql`, and `tkdbr` all share two flags: `--conn <name>` selects a named connection from config, and `--direct` bypasses the daemon and calls the library in-process. Without `--direct` the CLI dispatches to `toolkit-daemon` over a UNIX socket — the default once the daemon is set up. If the daemon isn't running and you haven't passed `--direct`, the call fails with a clear error rather than silently falling back. See [daemon.md](daemon.md) for setup.
+
 ## tkpsql
 
 ```sh

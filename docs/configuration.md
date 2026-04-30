@@ -101,3 +101,22 @@ dbr:
     allow_job_runs: false
     bundle_target: prod
 ```
+
+## daemon (optional)
+
+`toolkit-daemon` reads an optional `daemon:` section. Only relevant if you run the daemon — see [docs/daemon.md](daemon.md).
+
+```yaml
+daemon:
+  socket_path: /tmp/toolkit.sock   # default; can also be overridden with $TOOLKIT_SOCKET
+  allowed_uids: [501, 502]         # UIDs permitted to connect; omit/empty = all local users
+```
+
+Resolution order for the socket path:
+
+| Side    | Order                                              |
+|---------|----------------------------------------------------|
+| Daemon  | `daemon.socket_path` → `$TOOLKIT_SOCKET` → default |
+| Client  | `$TOOLKIT_SOCKET` → default                        |
+
+The CLI client never reads the daemon's config (the agent UID has no read access). If you customise `socket_path`, set `TOOLKIT_SOCKET` in the agent's environment so its CLIs find the socket.

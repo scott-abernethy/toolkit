@@ -171,6 +171,13 @@ The optional `[daemon]` section in `config.yaml`:
 The socket path can also be overridden at runtime with the `TOOLKIT_SOCKET` environment
 variable (checked by both daemon and CLI tools).
 
+**Asymmetry to be aware of**: the daemon resolves the socket path as
+`daemon.socket_path` (config) → `$TOOLKIT_SOCKET` → default. The CLI client only
+reads `$TOOLKIT_SOCKET` → default — it deliberately does not read the daemon's
+config (the agent UID has no read access). If you customise `socket_path` in
+the daemon config, you must also set `TOOLKIT_SOCKET` in the agent's
+environment (e.g. via the user's shell profile) so its CLIs reach the socket.
+
 ## Touch ID / sudo authentication (macOS)
 
 To require Touch ID for agent-to-daemon connections, use `sudo` as the transport wrapper:
