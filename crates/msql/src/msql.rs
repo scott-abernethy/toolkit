@@ -1,4 +1,5 @@
 use common::exit_with_error;
+use common::load_named_section;
 use common::sql::{self, QueryResponse};
 use serde::Deserialize;
 use serde_json::{Map, Value};
@@ -42,7 +43,7 @@ impl ConnConfig {
 }
 
 pub fn load_config(conn: Option<&str>) -> ConnConfig {
-    sql::load_named_config("msql", conn)
+    load_named_section("msql", conn)
 }
 
 // ---------------------------------------------------------------------------

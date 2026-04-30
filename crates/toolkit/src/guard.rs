@@ -25,35 +25,7 @@ pub struct ConnConfig {
 /// Load a named connection from the given app section of the shared config.
 /// If `conn` is None and exactly one connection is configured, that one is used.
 pub fn load_config(app: &str, conn: Option<&str>) -> ConnConfig {
-    let mut configs = common::load_section::<HashMap<String, ConnConfig>>(app);
-
-    match conn {
-        Some(name) => configs.remove(name).unwrap_or_else(|| {
-            let available = sorted_keys(&configs);
-            exit_with_error(format!(
-                "Unknown connection '{}'. Available: {}",
-                name,
-                available.join(", ")
-            ))
-        }),
-        None => {
-            if configs.len() == 1 {
-                configs.into_values().next().unwrap()
-            } else {
-                let available = sorted_keys(&configs);
-                exit_with_error(format!(
-                    "Multiple connections configured, specify --conn. Available: {}",
-                    available.join(", ")
-                ))
-            }
-        }
-    }
-}
-
-fn sorted_keys(map: &HashMap<String, ConnConfig>) -> Vec<String> {
-    let mut keys: Vec<String> = map.keys().cloned().collect();
-    keys.sort();
-    keys
+    common::load_named_section(app, conn)
 }
 
 // ---------------------------------------------------------------------------

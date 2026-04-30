@@ -5,7 +5,7 @@ pub mod sql;
 use serde::Serialize;
 use std::process;
 
-pub use config::load_section;
+pub use config::{load_named_section, load_named_section_with_name, load_section};
 
 /// Standard JSON error output for agent consumption.
 #[derive(Serialize)]

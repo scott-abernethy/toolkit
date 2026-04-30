@@ -1,5 +1,6 @@
 use crate::exit_with_error;
 use serde::de::DeserializeOwned;
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 /// Resolve the config file path.
@@ -84,6 +85,53 @@ pub fn load_section<T: DeserializeOwned>(section: &str) -> T {
 
     T::deserialize(section_val.clone())
         .unwrap_or_else(|e| exit_with_error(format!("Invalid [{}] config: {}", section, e)))
+}
+
+/// Load a named connection from a config section.
+///
+/// If `conn` is None and exactly one connection is configured, that one is used.
+/// If `conn` is None and multiple connections exist, exits with an error
+/// listing the available names.
+pub fn load_named_section<T: DeserializeOwned>(section: &str, conn: Option<&str>) -> T {
+    load_named_section_with_name(section, conn).1
+}
+
+/// Like `load_named_section`, but also returns the connection name. Used by
+/// tools that need to thread the name through to a CLI flag (e.g. `--profile`).
+pub fn load_named_section_with_name<T: DeserializeOwned>(
+    section: &str,
+    conn: Option<&str>,
+) -> (String, T) {
+    let mut configs = load_section::<HashMap<String, T>>(section);
+
+    match conn {
+        Some(name) => {
+            let value = configs.remove(name).unwrap_or_else(|| {
+                exit_with_error(format!(
+                    "Unknown connection '{}'. Available: {}",
+                    name,
+                    sorted_keys(&configs).join(", ")
+                ))
+            });
+            (name.to_string(), value)
+        }
+        None => {
+            if configs.len() == 1 {
+                configs.into_iter().next().unwrap()
+            } else {
+                exit_with_error(format!(
+                    "Multiple connections configured, specify --conn. Available: {}",
+                    sorted_keys(&configs).join(", ")
+                ))
+            }
+        }
+    }
+}
+
+fn sorted_keys<T>(map: &HashMap<String, T>) -> Vec<String> {
+    let mut keys: Vec<String> = map.keys().cloned().collect();
+    keys.sort();
+    keys
 }
 
 #[cfg(test)]

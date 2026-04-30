@@ -1,6 +1,7 @@
 use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
 use common::exit_with_error;
 use common::sql::{self, QueryResponse};
+use common::load_named_section;
 use native_tls::TlsConnector;
 use postgres::types::Type;
 use postgres_native_tls::MakeTlsConnector;
@@ -37,7 +38,7 @@ impl ConnConfig {
 }
 
 pub fn load_config(conn: Option<&str>) -> ConnConfig {
-    sql::load_named_config("psql", conn)
+    load_named_section("psql", conn)
 }
 
 // ---------------------------------------------------------------------------

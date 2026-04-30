@@ -1,8 +1,6 @@
 use crate::exit_with_error;
-use serde::de::DeserializeOwned;
 use serde::Serialize;
 use serde_json::{Map, Value};
-use std::collections::HashMap;
 
 // ---------------------------------------------------------------------------
 // Write-permission guard
@@ -103,46 +101,6 @@ impl QueryResponse {
     pub fn print(self) {
         println!("{}", serde_json::to_string(&self).unwrap());
     }
-}
-
-// ---------------------------------------------------------------------------
-// Config loading
-// ---------------------------------------------------------------------------
-
-/// Load a named connection from a config section.
-/// If `conn` is None and exactly one connection is configured, that one is used.
-/// If `conn` is None and multiple connections are configured, exits with an error
-/// listing the available names.
-pub fn load_named_config<T: DeserializeOwned>(section: &str, conn: Option<&str>) -> T {
-    let mut configs = crate::load_section::<HashMap<String, T>>(section);
-
-    match conn {
-        Some(name) => configs.remove(name).unwrap_or_else(|| {
-            let available = sorted_keys(&configs);
-            exit_with_error(format!(
-                "Unknown connection '{}'. Available: {}",
-                name,
-                available.join(", ")
-            ))
-        }),
-        None => {
-            if configs.len() == 1 {
-                configs.into_values().next().unwrap()
-            } else {
-                let available = sorted_keys(&configs);
-                exit_with_error(format!(
-                    "Multiple connections configured, specify --conn. Available: {}",
-                    available.join(", ")
-                ))
-            }
-        }
-    }
-}
-
-fn sorted_keys<T>(map: &HashMap<String, T>) -> Vec<String> {
-    let mut keys: Vec<String> = map.keys().cloned().collect();
-    keys.sort();
-    keys
 }
 
 // ---------------------------------------------------------------------------

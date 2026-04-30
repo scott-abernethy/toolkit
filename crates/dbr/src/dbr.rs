@@ -45,41 +45,9 @@ impl ConnConfig {
 /// Load a named connection from the [dbr] section of the shared config.
 /// If `conn` is None and exactly one connection is configured, that one is used.
 pub fn load_config(conn: Option<&str>) -> ConnConfig {
-    let mut configs = common::load_section::<HashMap<String, ConnConfig>>("dbr");
-
-    match conn {
-        Some(name) => {
-            let mut c = configs.remove(name).unwrap_or_else(|| {
-                let available = sorted_keys(&configs);
-                exit_with_error(format!(
-                    "Unknown connection '{}'. Available: {}",
-                    name,
-                    available.join(", ")
-                ))
-            });
-            c.conn_name = name.to_string();
-            c
-        }
-        None => {
-            if configs.len() == 1 {
-                let (name, mut c) = configs.into_iter().next().unwrap();
-                c.conn_name = name;
-                c
-            } else {
-                let available = sorted_keys(&configs);
-                exit_with_error(format!(
-                    "Multiple connections configured, specify --conn. Available: {}",
-                    available.join(", ")
-                ))
-            }
-        }
-    }
-}
-
-fn sorted_keys(map: &HashMap<String, ConnConfig>) -> Vec<String> {
-    let mut keys: Vec<String> = map.keys().cloned().collect();
-    keys.sort();
-    keys
+    let (name, mut c) = common::load_named_section_with_name::<ConnConfig>("dbr", conn);
+    c.conn_name = name;
+    c
 }
 
 // ---------------------------------------------------------------------------
