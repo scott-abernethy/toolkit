@@ -1,9 +1,13 @@
 mod guard;
 
 use clap::{Parser, Subcommand};
-use common::{config, exit_with_error, key, Result, ToolkitError};
+use common::{client, config, exit_with_error, key, Result, ToolkitError};
 use secrecy::ExposeSecret;
+use std::os::unix::net::UnixStream;
 use std::process;
+
+const DAEMON_USER: &str = "_toolkit";
+const DAEMON_CONFIG_PATH: &str = "/var/lib/toolkit/.config/toolkit/config.yaml";
 
 /// Default environment variables set by known AI agent harnesses.
 /// If any are present, toolkit refuses to run — agents must not be able to
@@ -87,6 +91,11 @@ enum Commands {
     },
     /// Generate guarded wrapper scripts in ~/.config/toolkit/bin
     Install,
+    /// Manage the toolkit daemon
+    Daemon {
+        #[command(subcommand)]
+        cmd: DaemonCmd,
+    },
     /// Run a CLI through the toolkit guard (used by generated wrapper scripts)
     Guard {
         /// App name — matches config section (e.g. kubectl, pup)
@@ -105,6 +114,25 @@ enum Commands {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true, last = true)]
         args: Vec<String>,
     },
+}
+
+#[derive(Subcommand)]
+enum DaemonCmd {
+    /// Manage the daemon's config file (requires sudo)
+    Config {
+        #[command(subcommand)]
+        cmd: DaemonConfigCmd,
+    },
+    /// Show daemon status: socket path and reachability
+    Status,
+}
+
+#[derive(Subcommand)]
+enum DaemonConfigCmd {
+    /// Open the daemon config in $EDITOR (runs as _toolkit via sudo)
+    Edit,
+    /// Print the daemon config with secrets masked (runs as _toolkit via sudo)
+    Show,
 }
 
 #[derive(Subcommand)]
@@ -164,6 +192,16 @@ fn run() -> Result<i32> {
                 ConfigCmd::Show => cmd_config_show()?,
                 ConfigCmd::Template { app } => cmd_config_template(&app)?,
                 ConfigCmd::Migrate => cmd_config_migrate()?,
+            }
+            Ok(0)
+        }
+        Commands::Daemon { cmd } => {
+            match cmd {
+                DaemonCmd::Config { cmd } => match cmd {
+                    DaemonConfigCmd::Edit => cmd_daemon_config_edit()?,
+                    DaemonConfigCmd::Show => cmd_daemon_config_show()?,
+                },
+                DaemonCmd::Status => cmd_daemon_status()?,
             }
             Ok(0)
         }
@@ -553,6 +591,75 @@ fn cmd_config_show() -> Result<()> {
         print!("{}", contents);
     }
     Ok(())
+}
+
+fn cmd_daemon_status() -> Result<()> {
+    let socket_path = std::env::var("TOOLKIT_SOCKET")
+        .unwrap_or_else(|_| client::DEFAULT_SOCKET.to_owned());
+    let reachable = UnixStream::connect(&socket_path).is_ok();
+    println!(
+        "{}",
+        serde_json::json!({"socket": socket_path, "reachable": reachable})
+    );
+    Ok(())
+}
+
+fn cmd_daemon_config_edit() -> Result<()> {
+    let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vi".to_string());
+    let status = process::Command::new("sudo")
+        .args(["-u", DAEMON_USER, &editor, DAEMON_CONFIG_PATH])
+        .status()
+        .map_err(|e| ToolkitError::other(format!("failed to run sudo: {e}")))?;
+    if !status.success() {
+        process::exit(status.code().unwrap_or(1));
+    }
+    Ok(())
+}
+
+fn cmd_daemon_config_show() -> Result<()> {
+    let output = process::Command::new("sudo")
+        .args(["-u", DAEMON_USER, "cat", DAEMON_CONFIG_PATH])
+        .output()
+        .map_err(|e| ToolkitError::other(format!("failed to run sudo: {e}")))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(ToolkitError::other(format!(
+            "failed to read daemon config: {}",
+            stderr.trim()
+        )));
+    }
+    let contents = String::from_utf8(output.stdout)
+        .map_err(|_| ToolkitError::other("daemon config is not valid UTF-8"))?;
+    let mut value: serde_yaml::Value = serde_yaml::from_str(&contents)
+        .map_err(|e| ToolkitError::config(format!("invalid daemon config: {e}")))?;
+    mask_sensitive(&mut value);
+    let masked = serde_yaml::to_string(&value)
+        .map_err(|e| ToolkitError::other(format!("failed to serialize config: {e}")))?;
+    print!("{}", masked);
+    Ok(())
+}
+
+fn mask_sensitive(value: &mut serde_yaml::Value) {
+    match value {
+        serde_yaml::Value::Mapping(map) => {
+            for (k, v) in map.iter_mut() {
+                let key = k.as_str().unwrap_or("").to_lowercase();
+                if key.contains("password") || key.contains("token") || key.contains("secret") {
+                    if v.is_string() {
+                        *v = serde_yaml::Value::String("***".to_string());
+                    }
+                } else {
+                    mask_sensitive(v);
+                }
+            }
+        }
+        serde_yaml::Value::Sequence(seq) => {
+            for v in seq.iter_mut() {
+                mask_sensitive(v);
+            }
+        }
+        _ => {}
+    }
 }
 
 fn cmd_config_template(app: &str) -> Result<()> {
