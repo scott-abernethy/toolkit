@@ -1,7 +1,6 @@
 use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
-use common::exit_with_error;
 use common::sql::{self, QueryResponse};
-use common::load_named_section;
+use common::{load_named_section, Result, ToolkitError};
 use native_tls::TlsConnector;
 use postgres::types::Type;
 use postgres_native_tls::MakeTlsConnector;
@@ -37,7 +36,7 @@ impl ConnConfig {
     }
 }
 
-pub fn load_config(conn: Option<&str>) -> ConnConfig {
+pub fn load_config(conn: Option<&str>) -> Result<ConnConfig> {
     load_named_section("psql", conn)
 }
 
@@ -45,7 +44,7 @@ pub fn load_config(conn: Option<&str>) -> ConnConfig {
 // Connection
 // ---------------------------------------------------------------------------
 
-fn connect(config: &ConnConfig) -> postgres::Client {
+fn connect(config: &ConnConfig) -> Result<postgres::Client> {
     let mut cfg = postgres::Config::new();
     cfg.host(&config.host)
         .port(config.port)
@@ -64,13 +63,12 @@ fn connect(config: &ConnConfig) -> postgres::Client {
     if config.use_tls() {
         let tls = TlsConnector::builder()
             .build()
-            .unwrap_or_else(|e| exit_with_error(format!("tls error: {}", e)));
+            .map_err(|e| ToolkitError::connection(format!("tls error: {}", e)))?;
         let connector = MakeTlsConnector::new(tls);
-        cfg.connect(connector)
-            .unwrap_or_else(|e| exit_with_error(sanitize_pg_error(&e)))
+        cfg.connect(connector).map_err(|e| sanitize_pg_error(&e))
     } else {
         cfg.connect(postgres::NoTls)
-            .unwrap_or_else(|e| exit_with_error(sanitize_pg_error(&e)))
+            .map_err(|e| sanitize_pg_error(&e))
     }
 }
 
@@ -78,26 +76,26 @@ fn connect(config: &ConnConfig) -> postgres::Client {
 // Error sanitisation
 // ---------------------------------------------------------------------------
 
-fn sanitize_pg_error(e: &postgres::Error) -> String {
+fn sanitize_pg_error(e: &postgres::Error) -> ToolkitError {
     let msg = e.to_string().to_lowercase();
     if msg.contains("password authentication failed") || msg.contains("authentication failed") {
-        "authentication failed".to_string()
+        ToolkitError::auth("authentication failed")
     } else if msg.contains("timeout") || msg.contains("timed out") {
-        "connection timed out".to_string()
+        ToolkitError::connection("connection timed out")
     } else if msg.contains("connection refused") || msg.contains("connection to server") {
-        "connection refused".to_string()
+        ToolkitError::connection("connection refused")
     } else if msg.contains("database") && msg.contains("does not exist") {
-        "database does not exist".to_string()
+        ToolkitError::not_found("database does not exist")
     } else if msg.contains("role") && msg.contains("does not exist") {
-        "role does not exist".to_string()
+        ToolkitError::not_found("role does not exist")
     } else if msg.contains("permission denied") || msg.contains("insufficient privilege") {
-        "permission denied".to_string()
+        ToolkitError::permission("permission denied")
     } else if msg.contains("ssl") || msg.contains("tls") {
-        "ssl error".to_string()
+        ToolkitError::connection("ssl error")
     } else if let Some(db_err) = e.as_db_error() {
-        db_err.message().to_string()
+        ToolkitError::other(db_err.message().to_string())
     } else {
-        "query error".to_string()
+        ToolkitError::other("query error")
     }
 }
 
@@ -202,38 +200,38 @@ fn exec_query(
     config: &ConnConfig,
     sql: &str,
     params: &[&(dyn postgres::types::ToSql + Sync)],
-) -> Vec<postgres::Row> {
-    let mut client = connect(config);
-    client
-        .query(sql, params)
-        .unwrap_or_else(|e| exit_with_error(sanitize_pg_error(&e)))
+) -> Result<Vec<postgres::Row>> {
+    let mut client = connect(config)?;
+    client.query(sql, params).map_err(|e| sanitize_pg_error(&e))
 }
 
 // ---------------------------------------------------------------------------
 // Subcommand implementations
 // ---------------------------------------------------------------------------
 
-pub fn run_query(config: &ConnConfig, sql: &str) {
+pub fn run_query(config: &ConnConfig, sql: &str) -> Result<()> {
     if let Some(table) = sql::detect_write_target(sql) {
-        sql::assert_write_allowed(config.writable_tables.as_ref(), &table);
+        sql::assert_write_allowed(config.writable_tables.as_ref(), &table)?;
     }
-    let raw = exec_query(config, sql, &[]);
+    let raw = exec_query(config, sql, &[])?;
     let rows: Vec<Map<String, Value>> = raw.iter().map(row_to_json).collect();
     QueryResponse::from_rows(rows).print();
+    Ok(())
 }
 
-pub fn list_tables(config: &ConnConfig, schema: &str) {
+pub fn list_tables(config: &ConnConfig, schema: &str) -> Result<()> {
     let raw = exec_query(
         config,
         "SELECT table_name FROM information_schema.tables \
          WHERE table_schema = $1 ORDER BY table_name",
         &[&schema],
-    );
+    )?;
     let rows: Vec<Map<String, Value>> = raw.iter().map(row_to_json).collect();
     QueryResponse::from_rows(rows).print();
+    Ok(())
 }
 
-pub fn describe_table(config: &ConnConfig, table: &str) {
+pub fn describe_table(config: &ConnConfig, table: &str) -> Result<()> {
     let (schema, tbl) = if table.contains('.') {
         let parts: Vec<&str> = table.splitn(2, '.').collect();
         (parts[0], parts[1])
@@ -248,7 +246,8 @@ pub fn describe_table(config: &ConnConfig, table: &str) {
          WHERE table_schema = $1 AND table_name = $2 \
          ORDER BY ordinal_position",
         &[&schema, &tbl],
-    );
+    )?;
     let rows: Vec<Map<String, Value>> = raw.iter().map(row_to_json).collect();
     QueryResponse::from_rows(rows).print();
+    Ok(())
 }

@@ -1,4 +1,4 @@
-use common::exit_with_error;
+use common::{Result, ToolkitError};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -44,10 +44,10 @@ impl ConnConfig {
 
 /// Load a named connection from the [dbr] section of the shared config.
 /// If `conn` is None and exactly one connection is configured, that one is used.
-pub fn load_config(conn: Option<&str>) -> ConnConfig {
-    let (name, mut c) = common::load_named_section_with_name::<ConnConfig>("dbr", conn);
+pub fn load_config(conn: Option<&str>) -> Result<ConnConfig> {
+    let (name, mut c) = common::load_named_section_with_name::<ConnConfig>("dbr", conn)?;
     c.conn_name = name;
-    c
+    Ok(c)
 }
 
 // ---------------------------------------------------------------------------
@@ -63,7 +63,7 @@ fn dbr_config_file() -> String {
 
 /// Run a `databricks` subcommand and return parsed JSON output.
 /// Global flags (--profile, --output) are prepended; subcommand args follow.
-fn run_databricks(config: &ConnConfig, args: &[&str]) -> Value {
+fn run_databricks(config: &ConnConfig, args: &[&str]) -> Result<Value> {
     let mut cmd = Command::new("databricks");
 
     cmd.arg("--output").arg("json");
@@ -78,7 +78,7 @@ fn run_databricks(config: &ConnConfig, args: &[&str]) -> Value {
 
     let output = cmd
         .output()
-        .unwrap_or_else(|e| exit_with_error(format!("Failed to run databricks CLI: {}", e)));
+        .map_err(|e| ToolkitError::cli(format!("Failed to run databricks CLI: {}", e)))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -89,16 +89,16 @@ fn run_databricks(config: &ConnConfig, args: &[&str]) -> Value {
         } else {
             stdout.trim().to_string()
         };
-        exit_with_error(sanitize_cli_error(&raw_msg));
+        return Err(sanitize_cli_error(&raw_msg));
     }
 
     serde_json::from_slice::<Value>(&output.stdout)
-        .unwrap_or_else(|e| exit_with_error(format!("Failed to parse CLI output: {}", e)))
+        .map_err(|e| ToolkitError::cli(format!("Failed to parse CLI output: {}", e)))
 }
 
 /// Run a databricks command that doesn't produce JSON output (e.g. bundle commands).
-/// Returns (stdout, stderr) if successful, exits on failure.
-fn run_databricks_no_json(config: &ConnConfig, args: &[&str]) -> (String, String) {
+/// Returns (stdout, stderr) if successful.
+fn run_databricks_no_json(config: &ConnConfig, args: &[&str]) -> Result<(String, String)> {
     let mut cmd = Command::new("databricks");
 
     // Subcommand and its args
@@ -111,7 +111,7 @@ fn run_databricks_no_json(config: &ConnConfig, args: &[&str]) -> (String, String
 
     let output = cmd
         .output()
-        .unwrap_or_else(|e| exit_with_error(format!("Failed to run databricks CLI: {}", e)));
+        .map_err(|e| ToolkitError::cli(format!("Failed to run databricks CLI: {}", e)))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -122,17 +122,17 @@ fn run_databricks_no_json(config: &ConnConfig, args: &[&str]) -> (String, String
         } else {
             stdout.trim().to_string()
         };
-        exit_with_error(sanitize_cli_error(&raw_msg));
+        return Err(sanitize_cli_error(&raw_msg));
     }
 
-    (
+    Ok((
         String::from_utf8_lossy(&output.stdout).to_string(),
         String::from_utf8_lossy(&output.stderr).to_string(),
-    )
+    ))
 }
 
 /// Run `databricks api post <path>` with a JSON body and return parsed JSON output.
-fn run_databricks_api_post(config: &ConnConfig, path: &str, body: &Value) -> Value {
+fn run_databricks_api_post(config: &ConnConfig, path: &str, body: &Value) -> Result<Value> {
     let body_str = serde_json::to_string(body).unwrap();
     let mut cmd = Command::new("databricks");
 
@@ -145,7 +145,7 @@ fn run_databricks_api_post(config: &ConnConfig, path: &str, body: &Value) -> Val
 
     let output = cmd
         .output()
-        .unwrap_or_else(|e| exit_with_error(format!("Failed to run databricks CLI: {}", e)));
+        .map_err(|e| ToolkitError::cli(format!("Failed to run databricks CLI: {}", e)))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -155,15 +155,15 @@ fn run_databricks_api_post(config: &ConnConfig, path: &str, body: &Value) -> Val
         } else {
             stdout.trim().to_string()
         };
-        exit_with_error(sanitize_cli_error(&raw_msg));
+        return Err(sanitize_cli_error(&raw_msg));
     }
 
     serde_json::from_slice::<Value>(&output.stdout)
-        .unwrap_or_else(|e| exit_with_error(format!("Failed to parse API response: {}", e)))
+        .map_err(|e| ToolkitError::cli(format!("Failed to parse API response: {}", e)))
 }
 
 /// Run `databricks api get <path>` and return parsed JSON output.
-fn run_databricks_api_get(config: &ConnConfig, path: &str) -> Value {
+fn run_databricks_api_get(config: &ConnConfig, path: &str) -> Result<Value> {
     let mut cmd = Command::new("databricks");
 
     cmd.args(["api", "get", path]);
@@ -175,7 +175,7 @@ fn run_databricks_api_get(config: &ConnConfig, path: &str) -> Value {
 
     let output = cmd
         .output()
-        .unwrap_or_else(|e| exit_with_error(format!("Failed to run databricks CLI: {}", e)));
+        .map_err(|e| ToolkitError::cli(format!("Failed to run databricks CLI: {}", e)))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -185,36 +185,38 @@ fn run_databricks_api_get(config: &ConnConfig, path: &str) -> Value {
         } else {
             stdout.trim().to_string()
         };
-        exit_with_error(sanitize_cli_error(&raw_msg));
+        return Err(sanitize_cli_error(&raw_msg));
     }
 
     serde_json::from_slice::<Value>(&output.stdout)
-        .unwrap_or_else(|e| exit_with_error(format!("Failed to parse API response: {}", e)))
+        .map_err(|e| ToolkitError::cli(format!("Failed to parse API response: {}", e)))
 }
 
 /// Strip credentials and reduce noisy CLI error messages to a single actionable line.
-fn sanitize_cli_error(msg: &str) -> String {
+fn sanitize_cli_error(msg: &str) -> ToolkitError {
     let lower = msg.to_lowercase();
 
     if lower.contains("401") || lower.contains("unauthorized") {
-        return "authentication error: check your token".to_string();
+        return ToolkitError::auth("authentication error: check your token");
     }
     if lower.contains("403") || lower.contains("forbidden") || lower.contains("permission denied") {
-        return "permission denied".to_string();
+        return ToolkitError::permission("permission denied");
     }
     if lower.contains("404") || lower.contains("does not exist") || lower.contains("not found") {
-        return "resource not found".to_string();
+        return ToolkitError::not_found("resource not found");
     }
     if lower.contains("token") && (lower.contains("invalid") || lower.contains("expired")) {
-        return "authentication error: invalid or expired token".to_string();
+        return ToolkitError::auth("authentication error: invalid or expired token");
     }
 
     // Return only the first non-empty line to avoid dumping multi-line stack traces
-    msg.lines()
+    let first_line = msg
+        .lines()
         .find(|l| !l.trim().is_empty())
         .unwrap_or("CLI error")
         .trim()
-        .to_string()
+        .to_string();
+    ToolkitError::cli(first_line)
 }
 
 fn print_json(v: &Value) {
@@ -225,9 +227,9 @@ fn print_json(v: &Value) {
 // Jobs
 // ---------------------------------------------------------------------------
 
-pub fn jobs_list(config: &ConnConfig, limit: u32) {
+pub fn jobs_list(config: &ConnConfig, limit: u32) -> Result<()> {
     let limit_str = limit.to_string();
-    let raw = run_databricks(config, &["jobs", "list", "--limit", &limit_str]);
+    let raw = run_databricks(config, &["jobs", "list", "--limit", &limit_str])?;
 
     let jobs = raw
         .get("jobs")
@@ -246,11 +248,12 @@ pub fn jobs_list(config: &ConnConfig, limit: u32) {
 
     let count = jobs.len();
     print_json(&json!({"jobs": jobs, "count": count}));
+    Ok(())
 }
 
-pub fn jobs_get(config: &ConnConfig, job_id: i64) {
+pub fn jobs_get(config: &ConnConfig, job_id: i64) -> Result<()> {
     let id_str = job_id.to_string();
-    let raw = run_databricks(config, &["jobs", "get", "--job-id", &id_str]);
+    let raw = run_databricks(config, &["jobs", "get", "--job-id", &id_str])?;
 
     let tasks = raw["settings"]["tasks"].as_array().map(|tasks| {
         tasks
@@ -276,6 +279,7 @@ pub fn jobs_get(config: &ConnConfig, job_id: i64) {
         "schedule": schedule,
         "tasks": tasks,
     }));
+    Ok(())
 }
 
 fn task_type(task: &Value) -> &str {
@@ -298,29 +302,30 @@ fn task_type(task: &Value) -> &str {
     }
 }
 
-pub fn jobs_trigger(config: &ConnConfig, job_id: i64) {
+pub fn jobs_trigger(config: &ConnConfig, job_id: i64) -> Result<()> {
     if !config.can_trigger_runs() {
-        exit_with_error(
+        return Err(ToolkitError::permission(
             "triggering job runs is not permitted for this connection \
              (set allow_job_runs = true in config)",
-        );
+        ));
     }
     let id_str = job_id.to_string();
-    let raw = run_databricks(config, &["jobs", "run-now", "--job-id", &id_str]);
+    let raw = run_databricks(config, &["jobs", "run-now", "--job-id", &id_str])?;
     print_json(&json!({"run_id": raw["run_id"], "ok": true}));
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
 // Runs
 // ---------------------------------------------------------------------------
 
-pub fn runs_list(config: &ConnConfig, job_id: i64, limit: u32) {
+pub fn runs_list(config: &ConnConfig, job_id: i64, limit: u32) -> Result<()> {
     let id_str = job_id.to_string();
     let limit_str = limit.to_string();
     let raw = run_databricks(
         config,
         &["runs", "list", "--job-id", &id_str, "--limit", &limit_str],
-    );
+    )?;
 
     let runs = raw
         .get("runs")
@@ -330,12 +335,14 @@ pub fn runs_list(config: &ConnConfig, job_id: i64, limit: u32) {
 
     let count = runs.len();
     print_json(&json!({"runs": runs, "count": count}));
+    Ok(())
 }
 
-pub fn runs_get(config: &ConnConfig, run_id: i64) {
+pub fn runs_get(config: &ConnConfig, run_id: i64) -> Result<()> {
     let id_str = run_id.to_string();
-    let raw = run_databricks(config, &["runs", "get", "--run-id", &id_str]);
+    let raw = run_databricks(config, &["runs", "get", "--run-id", &id_str])?;
     print_json(&compact_run(&raw));
+    Ok(())
 }
 
 /// Compact run representation: drop all scheduling/cluster/task detail, keep status + timing.
@@ -359,9 +366,9 @@ fn compact_run(r: &Value) -> Value {
     })
 }
 
-pub fn runs_output(config: &ConnConfig, run_id: i64) {
+pub fn runs_output(config: &ConnConfig, run_id: i64) -> Result<()> {
     let id_str = run_id.to_string();
-    let raw = run_databricks(config, &["runs", "get-output", "--run-id", &id_str]);
+    let raw = run_databricks(config, &["runs", "get-output", "--run-id", &id_str])?;
 
     let state = raw["metadata"].get("state").unwrap_or(&Value::Null);
 
@@ -398,14 +405,15 @@ pub fn runs_output(config: &ConnConfig, run_id: i64) {
         "error": error_msg,
         "error_trace": error_trace,
     }));
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
 // Clusters
 // ---------------------------------------------------------------------------
 
-pub fn clusters_list(config: &ConnConfig) {
-    let raw = run_databricks(config, &["clusters", "list"]);
+pub fn clusters_list(config: &ConnConfig) -> Result<()> {
+    let raw = run_databricks(config, &["clusters", "list"])?;
 
     // CLI may return a top-level array or an object with a "clusters" key
     let clusters = raw
@@ -416,11 +424,13 @@ pub fn clusters_list(config: &ConnConfig) {
 
     let count = clusters.len();
     print_json(&json!({"clusters": clusters, "count": count}));
+    Ok(())
 }
 
-pub fn clusters_get(config: &ConnConfig, cluster_id: &str) {
-    let raw = run_databricks(config, &["clusters", "get", "--cluster-id", cluster_id]);
+pub fn clusters_get(config: &ConnConfig, cluster_id: &str) -> Result<()> {
+    let raw = run_databricks(config, &["clusters", "get", "--cluster-id", cluster_id])?;
     print_json(&compact_cluster(&raw));
+    Ok(())
 }
 
 fn compact_cluster(c: &Value) -> Value {
@@ -446,8 +456,8 @@ fn compact_cluster(c: &Value) -> Value {
 // Warehouses
 // ---------------------------------------------------------------------------
 
-pub fn warehouses_list(config: &ConnConfig) {
-    let raw = run_databricks(config, &["warehouses", "list"]);
+pub fn warehouses_list(config: &ConnConfig) -> Result<()> {
+    let raw = run_databricks(config, &["warehouses", "list"])?;
 
     // CLI may return a top-level array or an object with a "warehouses" key
     let warehouses = raw
@@ -458,11 +468,13 @@ pub fn warehouses_list(config: &ConnConfig) {
 
     let count = warehouses.len();
     print_json(&json!({"warehouses": warehouses, "count": count}));
+    Ok(())
 }
 
-pub fn warehouses_get(config: &ConnConfig, warehouse_id: &str) {
-    let raw = run_databricks(config, &["warehouses", "get", "--id", warehouse_id]);
+pub fn warehouses_get(config: &ConnConfig, warehouse_id: &str) -> Result<()> {
+    let raw = run_databricks(config, &["warehouses", "get", "--id", warehouse_id])?;
     print_json(&compact_warehouse(&raw));
+    Ok(())
 }
 
 fn compact_warehouse(w: &Value) -> Value {
@@ -479,9 +491,9 @@ fn compact_warehouse(w: &Value) -> Value {
 // Catalogs
 // ---------------------------------------------------------------------------
 
-pub fn catalogs_list(config: &ConnConfig, limit: u32) {
+pub fn catalogs_list(config: &ConnConfig, limit: u32) -> Result<()> {
     let limit_str = limit.to_string();
-    let raw = run_databricks(config, &["catalogs", "list", "--max-results", &limit_str]);
+    let raw = run_databricks(config, &["catalogs", "list", "--max-results", &limit_str])?;
 
     // API returns a top-level array, not wrapped in an object
     let catalogs = raw
@@ -501,10 +513,11 @@ pub fn catalogs_list(config: &ConnConfig, limit: u32) {
 
     let count = catalogs.len();
     print_json(&json!({"catalogs": catalogs, "count": count}));
+    Ok(())
 }
 
-pub fn catalogs_get(config: &ConnConfig, catalog: &str) {
-    let raw = run_databricks(config, &["catalogs", "get", catalog]);
+pub fn catalogs_get(config: &ConnConfig, catalog: &str) -> Result<()> {
+    let raw = run_databricks(config, &["catalogs", "get", catalog])?;
 
     print_json(&json!({
         "name": raw["name"],
@@ -512,18 +525,19 @@ pub fn catalogs_get(config: &ConnConfig, catalog: &str) {
         "created_at": raw.get("created_at"),
         "comment": raw.get("comment"),
     }));
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
 // Schemas
 // ---------------------------------------------------------------------------
 
-pub fn schemas_list(config: &ConnConfig, catalog: &str, limit: u32) {
+pub fn schemas_list(config: &ConnConfig, catalog: &str, limit: u32) -> Result<()> {
     let limit_str = limit.to_string();
     let raw = run_databricks(
         config,
         &["schemas", "list", catalog, "--max-results", &limit_str],
-    );
+    )?;
 
     // API returns a top-level array, not wrapped in an object
     let schemas = raw
@@ -544,11 +558,12 @@ pub fn schemas_list(config: &ConnConfig, catalog: &str, limit: u32) {
 
     let count = schemas.len();
     print_json(&json!({"schemas": schemas, "count": count}));
+    Ok(())
 }
 
-pub fn schemas_get(config: &ConnConfig, catalog: &str, schema: &str) {
+pub fn schemas_get(config: &ConnConfig, catalog: &str, schema: &str) -> Result<()> {
     let full_name = format!("{}.{}", catalog, schema);
-    let raw = run_databricks(config, &["schemas", "get", &full_name]);
+    let raw = run_databricks(config, &["schemas", "get", &full_name])?;
 
     print_json(&json!({
         "name": raw["name"],
@@ -557,6 +572,7 @@ pub fn schemas_get(config: &ConnConfig, catalog: &str, schema: &str) {
         "created_at": raw.get("created_at"),
         "comment": raw.get("comment"),
     }));
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -569,7 +585,7 @@ pub fn tables_list(
     schema: &str,
     limit: u32,
     omit_columns: bool,
-) {
+) -> Result<()> {
     let limit_str = limit.to_string();
     let mut args = vec![
         "tables",
@@ -583,7 +599,7 @@ pub fn tables_list(
         args.push("--omit-columns");
     }
 
-    let raw = run_databricks(config, &args);
+    let raw = run_databricks(config, &args)?;
 
     // API returns a top-level array, not wrapped in an object
     let tables = raw
@@ -620,11 +636,12 @@ pub fn tables_list(
 
     let count = tables.len();
     print_json(&json!({"tables": tables, "count": count}));
+    Ok(())
 }
 
-pub fn tables_get(config: &ConnConfig, catalog: &str, schema: &str, table: &str) {
+pub fn tables_get(config: &ConnConfig, catalog: &str, schema: &str, table: &str) -> Result<()> {
     let full_name = format!("{}.{}.{}", catalog, schema, table);
-    let raw = run_databricks(config, &["tables", "get", &full_name]);
+    let raw = run_databricks(config, &["tables", "get", &full_name])?;
 
     let columns = raw.get("columns").and_then(Value::as_array).map(|cols| {
         cols.iter()
@@ -649,6 +666,7 @@ pub fn tables_get(config: &ConnConfig, catalog: &str, schema: &str, table: &str)
         "comment": raw.get("comment"),
         "columns": columns,
     }));
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -658,25 +676,26 @@ pub fn tables_get(config: &ConnConfig, catalog: &str, schema: &str, table: &str)
 /// Run `databricks auth login --host <host>` interactively, inheriting stdio.
 /// Writes OAuth credentials to DATABRICKS_CONFIG_FILE under DATABRICKS_CONFIG_PROFILE,
 /// so all subsequent tkdbr commands find them without a manually created ~/.databrickscfg.
-pub fn auth_login(config: &ConnConfig) {
+pub fn auth_login(config: &ConnConfig) -> Result<()> {
     let host = config
         .env
         .get("DATABRICKS_HOST")
         .map(|s| s.as_str())
-        .unwrap_or_else(|| exit_with_error("DATABRICKS_HOST not set in config env"));
+        .ok_or_else(|| ToolkitError::config("DATABRICKS_HOST not set in config env"))?;
 
     let output = Command::new("databricks")
         .args(["auth", "login", "--host", host, "--profile", &config.conn_name])
         .envs(&config.env)
         .env("DATABRICKS_CONFIG_FILE", dbr_config_file())
         .output()
-        .unwrap_or_else(|e| exit_with_error(format!("Failed to run databricks CLI: {}", e)));
+        .map_err(|e| ToolkitError::cli(format!("Failed to run databricks CLI: {}", e)))?;
 
     if output.status.success() {
         println!("{{\"ok\": true}}");
+        Ok(())
     } else {
         let msg = String::from_utf8_lossy(&output.stderr);
-        exit_with_error(msg.trim().to_string());
+        Err(ToolkitError::cli(msg.trim().to_string()))
     }
 }
 
@@ -690,32 +709,35 @@ mod tests {
 
     #[test]
     fn test_sanitize_auth_error() {
-        assert_eq!(
-            sanitize_cli_error("Error: 401 Unauthorized"),
-            "authentication error: check your token"
-        );
+        match sanitize_cli_error("Error: 401 Unauthorized") {
+            ToolkitError::Auth(m) => assert_eq!(m, "authentication error: check your token"),
+            other => panic!("expected Auth, got {:?}", other),
+        }
     }
 
     #[test]
     fn test_sanitize_not_found() {
-        assert_eq!(
-            sanitize_cli_error("Error: resource does not exist"),
-            "resource not found"
-        );
+        match sanitize_cli_error("Error: resource does not exist") {
+            ToolkitError::NotFound(m) => assert_eq!(m, "resource not found"),
+            other => panic!("expected NotFound, got {:?}", other),
+        }
     }
 
     #[test]
     fn test_sanitize_permission() {
-        assert_eq!(
-            sanitize_cli_error("Error: 403 Forbidden"),
-            "permission denied"
-        );
+        match sanitize_cli_error("Error: 403 Forbidden") {
+            ToolkitError::Permission(m) => assert_eq!(m, "permission denied"),
+            other => panic!("expected Permission, got {:?}", other),
+        }
     }
 
     #[test]
     fn test_sanitize_first_line_only() {
         let msg = "Error: something went wrong\n  at line 1\n  at line 2\n  at line 3";
-        assert_eq!(sanitize_cli_error(msg), "Error: something went wrong");
+        match sanitize_cli_error(msg) {
+            ToolkitError::Cli(m) => assert_eq!(m, "Error: something went wrong"),
+            other => panic!("expected Cli, got {:?}", other),
+        }
     }
 
     #[test]
@@ -841,12 +863,17 @@ const QUERY_POLL_INTERVAL: Duration = Duration::from_secs(2);
 
 /// Execute a SQL query via the Statement Execution API.
 /// Uses `databricks api post /api/2.0/sql/statements` to submit, then polls if needed.
-pub fn query(config: &ConnConfig, sql: &str, warehouse_id: Option<&str>, limit: u32) {
-    let wh_id = warehouse_id.or(config.warehouse_id()).unwrap_or_else(|| {
-        exit_with_error(
+pub fn query(
+    config: &ConnConfig,
+    sql: &str,
+    warehouse_id: Option<&str>,
+    limit: u32,
+) -> Result<()> {
+    let wh_id = warehouse_id.or(config.warehouse_id()).ok_or_else(|| {
+        ToolkitError::config(
             "no warehouse_id: pass --warehouse-id or set DATABRICKS_WAREHOUSE_ID in config env",
         )
-    });
+    })?;
 
     // Apply LIMIT to the SQL if the user hasn't already included one
     let statement = if limit > 0 && !has_limit_clause(sql) {
@@ -863,10 +890,10 @@ pub fn query(config: &ConnConfig, sql: &str, warehouse_id: Option<&str>, limit: 
         "format": "JSON_ARRAY",
     });
 
-    let raw = run_databricks_api_post(config, "/api/2.0/sql/statements", &body);
+    let raw = run_databricks_api_post(config, "/api/2.0/sql/statements", &body)?;
 
-    let result = poll_until_done(config, raw);
-    print_query_result(&result);
+    let result = poll_until_done(config, raw)?;
+    print_query_result(&result)
 }
 
 /// Check if SQL already contains a LIMIT clause (simple heuristic).
@@ -878,17 +905,17 @@ fn has_limit_clause(sql: &str) -> bool {
 }
 
 /// Poll a statement until it reaches a terminal state.
-fn poll_until_done(config: &ConnConfig, initial: Value) -> Value {
+fn poll_until_done(config: &ConnConfig, initial: Value) -> Result<Value> {
     let state = initial["status"]["state"].as_str().unwrap_or("UNKNOWN");
 
     match state {
-        "SUCCEEDED" | "FAILED" | "CANCELED" | "CLOSED" => return initial,
+        "SUCCEEDED" | "FAILED" | "CANCELED" | "CLOSED" => return Ok(initial),
         _ => {} // PENDING or RUNNING — need to poll
     }
 
     let statement_id = initial["statement_id"]
         .as_str()
-        .unwrap_or_else(|| exit_with_error("no statement_id in response for polling"));
+        .ok_or_else(|| ToolkitError::other("no statement_id in response for polling"))?;
 
     let poll_path = format!("/api/2.0/sql/statements/{}", statement_id);
 
@@ -897,28 +924,28 @@ fn poll_until_done(config: &ConnConfig, initial: Value) -> Value {
         thread::sleep(QUERY_POLL_INTERVAL);
         eprint!(".");
 
-        let resp = run_databricks_api_get(config, &poll_path);
+        let resp = run_databricks_api_get(config, &poll_path)?;
         let state = resp["status"]["state"].as_str().unwrap_or("UNKNOWN");
 
         match state {
             "SUCCEEDED" | "FAILED" | "CANCELED" | "CLOSED" => {
                 eprintln!();
-                return resp;
+                return Ok(resp);
             }
             _ => continue,
         }
     }
 
     eprintln!();
-    exit_with_error(format!(
+    Err(ToolkitError::other(format!(
         "query timed out after {}s (statement_id: {})",
         QUERY_MAX_POLLS as u64 * QUERY_POLL_INTERVAL.as_secs(),
         statement_id
-    ))
+    )))
 }
 
 /// Format and print query results as compact JSON.
-fn print_query_result(raw: &Value) {
+fn print_query_result(raw: &Value) -> Result<()> {
     let state = raw["status"]["state"].as_str().unwrap_or("UNKNOWN");
 
     if state != "SUCCEEDED" {
@@ -927,8 +954,10 @@ fn print_query_result(raw: &Value) {
             .and_then(|e| e.get("message"))
             .and_then(|m| m.as_str())
             .unwrap_or("query failed");
-        print_json(&json!({"error": error_msg, "state": state}));
-        std::process::exit(1);
+        return Err(ToolkitError::other(format!(
+            "{} (state: {})",
+            error_msg, state
+        )));
     }
 
     // Extract column names from manifest
@@ -965,25 +994,28 @@ fn print_query_result(raw: &Value) {
     }
 
     print_json(&result);
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
 // Bundles
 // ---------------------------------------------------------------------------
 
-pub fn bundle_validate(config: &ConnConfig) {
+pub fn bundle_validate(config: &ConnConfig) -> Result<()> {
     let target = config.get_bundle_target();
-    let _ = run_databricks_no_json(config, &["bundle", "validate", "-t", &target]);
+    run_databricks_no_json(config, &["bundle", "validate", "-t", &target])?;
     print_json(&json!({"ok": true}));
+    Ok(())
 }
 
-pub fn bundle_deploy(config: &ConnConfig) {
+pub fn bundle_deploy(config: &ConnConfig) -> Result<()> {
     let target = config.get_bundle_target();
-    let _ = run_databricks_no_json(config, &["bundle", "deploy", "-t", &target]);
+    run_databricks_no_json(config, &["bundle", "deploy", "-t", &target])?;
     print_json(&json!({"ok": true}));
+    Ok(())
 }
 
-pub fn bundle_run(config: &ConnConfig, name: &str, only: Option<&str>) {
+pub fn bundle_run(config: &ConnConfig, name: &str, only: Option<&str>) -> Result<()> {
     let target = config.get_bundle_target();
     let mut args = vec!["bundle", "run", name, "-t", &target, "--no-wait"];
 
@@ -992,7 +1024,7 @@ pub fn bundle_run(config: &ConnConfig, name: &str, only: Option<&str>) {
         args.push(only_val);
     }
 
-    let (stdout, stderr) = run_databricks_no_json(config, &args);
+    let (stdout, stderr) = run_databricks_no_json(config, &args)?;
 
     // Extract run ID from output like "Run URL: https://...#job/JOB_ID/run/RUN_ID"
     // Check both stdout and stderr as databricks CLI outputs to stderr
@@ -1007,4 +1039,5 @@ pub fn bundle_run(config: &ConnConfig, name: &str, only: Option<&str>) {
     } else {
         print_json(&json!({"ok": true}));
     }
+    Ok(())
 }

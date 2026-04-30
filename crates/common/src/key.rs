@@ -1,13 +1,14 @@
+use crate::error::{Result, ToolkitError};
 use secrecy::{ExposeSecret, SecretString};
 use std::path::PathBuf;
 
-fn key_file_path() -> PathBuf {
-    let home = std::env::var("HOME").expect("HOME not set");
-    PathBuf::from(home)
+fn key_file_path() -> Result<PathBuf> {
+    let home = std::env::var("HOME").map_err(|_| ToolkitError::config("HOME not set"))?;
+    Ok(PathBuf::from(home)
         .join(".config")
         .join("sops")
         .join("age")
-        .join("keys.txt")
+        .join("keys.txt"))
 }
 
 fn secret(s: String) -> SecretString {
@@ -23,46 +24,58 @@ pub fn generate_keypair() -> (SecretString, String) {
 }
 
 /// Derive the age public key (recipient) from a stored private key string.
-pub fn public_key_from_private(private_key: &SecretString) -> Result<String, String> {
+pub fn public_key_from_private(private_key: &SecretString) -> Result<String> {
     let identity: age::x25519::Identity = private_key
         .expose_secret()
         .parse()
-        .map_err(|e| format!("Invalid age private key: {}", e))?;
+        .map_err(|e| ToolkitError::crypto(format!("Invalid age private key: {}", e)))?;
     Ok(identity.to_public().to_string())
 }
 
 /// Retrieve the age private key from ~/.config/sops/age/keys.txt.
-pub fn get_private_key() -> Result<SecretString, String> {
+pub fn get_private_key() -> Result<SecretString> {
     read_key_file()
 }
 
 /// Read the age private key from the standard sops key file.
-pub fn read_key_file() -> Result<SecretString, String> {
-    let path = key_file_path();
+pub fn read_key_file() -> Result<SecretString> {
+    let path = key_file_path()?;
     let content = std::fs::read_to_string(&path)
-        .map_err(|e| format!("Cannot read {}: {}", path.display(), e))?;
+        .map_err(|e| ToolkitError::crypto(format!("Cannot read {}: {}", path.display(), e)))?;
 
     let key = content
         .lines()
         .find(|line| line.starts_with("AGE-SECRET-KEY-"))
-        .ok_or_else(|| format!("No AGE-SECRET-KEY found in {}", path.display()))?;
+        .ok_or_else(|| {
+            ToolkitError::crypto(format!("No AGE-SECRET-KEY found in {}", path.display()))
+        })?;
 
     Ok(secret(key.to_owned()))
 }
 
 /// Write the age private key to the standard sops key file with mode 0600.
-/// If an existing key file is present, it is backed up to `keys.txt.bak` first.
-pub fn write_key_file(key: &SecretString) -> Result<PathBuf, String> {
-    let path = key_file_path();
+/// If an existing key file is present, it is backed up to `keys.txt.bak` first
+/// (also chmod 0600 so the backup doesn't end up world-readable).
+pub fn write_key_file(key: &SecretString) -> Result<PathBuf> {
+    let path = key_file_path()?;
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| format!("Failed to create {}: {}", parent.display(), e))?;
+        std::fs::create_dir_all(parent).map_err(|e| {
+            ToolkitError::crypto(format!("Failed to create {}: {}", parent.display(), e))
+        })?;
     }
 
     if path.exists() {
         let backup = path.with_extension("txt.bak");
         std::fs::copy(&path, &backup)
-            .map_err(|e| format!("Failed to backup existing key file: {}", e))?;
+            .map_err(|e| ToolkitError::crypto(format!("Failed to backup existing key file: {}", e)))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let perms = std::fs::Permissions::from_mode(0o600);
+            std::fs::set_permissions(&backup, perms).map_err(|e| {
+                ToolkitError::crypto(format!("Failed to chmod backup key file: {}", e))
+            })?;
+        }
         eprintln!("Backed up existing key to {}", backup.display());
     }
 
@@ -74,11 +87,11 @@ pub fn write_key_file(key: &SecretString) -> Result<PathBuf, String> {
         .truncate(true)
         .mode(0o600)
         .open(&path)
-        .map_err(|e| format!("Failed to create key file: {}", e))?;
+        .map_err(|e| ToolkitError::crypto(format!("Failed to create key file: {}", e)))?;
 
     writeln!(file, "# created by toolkit init")
         .and_then(|_| writeln!(file, "{}", key.expose_secret()))
-        .map_err(|e| format!("Failed to write key file: {}", e))?;
+        .map_err(|e| ToolkitError::crypto(format!("Failed to write key file: {}", e)))?;
 
     Ok(path)
 }

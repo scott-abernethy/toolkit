@@ -1,7 +1,7 @@
 mod guard;
 
 use clap::{Parser, Subcommand};
-use common::{config, key};
+use common::{config, exit_with_error, key, Result, ToolkitError};
 use secrecy::ExposeSecret;
 use std::process;
 
@@ -21,30 +21,20 @@ const DEFAULT_AGENT_ENV_VARS: &[&str] = &[
 /// Since these names are not sensitive, they remain plaintext even in encrypted
 /// configs — no decryption needed.
 fn load_agent_env_vars() -> Vec<String> {
-    let path = config::config_path();
+    let path = match config::config_path() {
+        Ok(p) => p,
+        Err(_) => return defaults(),
+    };
     if !path.exists() {
-        return DEFAULT_AGENT_ENV_VARS
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
+        return defaults();
     }
     let contents = match std::fs::read_to_string(&path) {
         Ok(c) => c,
-        Err(_) => {
-            return DEFAULT_AGENT_ENV_VARS
-                .iter()
-                .map(|s| s.to_string())
-                .collect()
-        }
+        Err(_) => return defaults(),
     };
     let value: serde_yaml::Value = match serde_yaml::from_str(&contents) {
         Ok(v) => v,
-        Err(_) => {
-            return DEFAULT_AGENT_ENV_VARS
-                .iter()
-                .map(|s| s.to_string())
-                .collect()
-        }
+        Err(_) => return defaults(),
     };
     match value
         .get("harness_detection")
@@ -55,11 +45,15 @@ fn load_agent_env_vars() -> Vec<String> {
             .iter()
             .filter_map(|v| v.as_str().map(|s| s.to_string()))
             .collect(),
-        None => DEFAULT_AGENT_ENV_VARS
-            .iter()
-            .map(|s| s.to_string())
-            .collect(),
+        None => defaults(),
     }
+}
+
+fn defaults() -> Vec<String> {
+    DEFAULT_AGENT_ENV_VARS
+        .iter()
+        .map(|s| s.to_string())
+        .collect()
 }
 
 fn not_permitted() -> ! {
@@ -138,7 +132,7 @@ fn is_agent() -> bool {
         .any(|var| std::env::var(var).is_ok())
 }
 
-fn main() {
+fn run() -> Result<i32> {
     let start = std::time::Instant::now();
 
     // When running under an agent, use try_parse so that missing/invalid
@@ -158,44 +152,55 @@ fn main() {
         reject_if_agent();
     }
     match cli.command {
-        Commands::Init => cmd_init(),
-        Commands::Config { cmd } => match cmd {
-            ConfigCmd::Edit => cmd_config_edit(),
-            ConfigCmd::Encrypt => cmd_config_encrypt(),
-            ConfigCmd::Decrypt => cmd_config_decrypt(),
-            ConfigCmd::Show => cmd_config_show(),
-            ConfigCmd::Template { app } => cmd_config_template(&app),
-            ConfigCmd::Migrate => cmd_config_migrate(),
-        },
-        Commands::Install => cmd_install(),
+        Commands::Init => {
+            cmd_init()?;
+            Ok(0)
+        }
+        Commands::Config { cmd } => {
+            match cmd {
+                ConfigCmd::Edit => cmd_config_edit()?,
+                ConfigCmd::Encrypt => cmd_config_encrypt()?,
+                ConfigCmd::Decrypt => cmd_config_decrypt()?,
+                ConfigCmd::Show => cmd_config_show()?,
+                ConfigCmd::Template { app } => cmd_config_template(&app)?,
+                ConfigCmd::Migrate => cmd_config_migrate()?,
+            }
+            Ok(0)
+        }
+        Commands::Install => {
+            cmd_install()?;
+            Ok(0)
+        }
         Commands::Guard {
             app,
             conn,
             debug,
             args,
         } => {
-            let config = guard::load_config(&app, conn.as_deref());
+            let config = guard::load_config(&app, conn.as_deref())?;
             let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-            guard::check_rules(&config, &arg_refs);
+            guard::check_rules(&config, &arg_refs)?;
             if debug {
                 let elapsed = start.elapsed();
                 eprintln!("[guard] overhead: {:.1}ms", elapsed.as_secs_f64() * 1000.0);
             }
-            guard::run(&config, &args);
+            guard::run(&config, &args)
         }
     }
 }
 
-fn cmd_init() {
+fn main() {
+    match run() {
+        Ok(code) => process::exit(code),
+        Err(e) => exit_with_error(e),
+    }
+}
+
+fn cmd_init() -> Result<()> {
     let (private_key, public_key) = key::generate_keypair();
 
-    match key::write_key_file(&private_key) {
-        Ok(path) => println!("Wrote private key to {} (mode 0600)", path.display()),
-        Err(e) => {
-            eprintln!("Error writing key file: {}", e);
-            process::exit(1);
-        }
-    }
+    let path = key::write_key_file(&private_key)?;
+    println!("Wrote private key to {} (mode 0600)", path.display());
 
     println!("Public key (age recipient): {}", public_key);
     println!();
@@ -210,43 +215,35 @@ fn cmd_init() {
     println!();
     println!("  Claude Code (~/.claude/settings.json):");
     println!("    {{\"permissions\": {{\"deny\": [\"Bash(toolkit:*)\"]}}}}");
+    Ok(())
 }
 
-fn cmd_install() {
-    let path = config::config_path();
+fn cmd_install() -> Result<()> {
+    let path = config::config_path()?;
     if !path.exists() {
-        eprintln!("Config not found: {}", path.display());
-        eprintln!("Run `toolkit init` first, then `toolkit config edit` to add connections.");
-        process::exit(1);
+        return Err(ToolkitError::config(format!(
+            "Config not found: {}. Run `toolkit init` first, then `toolkit config edit` to add connections.",
+            path.display()
+        )));
     }
 
-    let contents = std::fs::read_to_string(&path).unwrap_or_else(|e| {
-        eprintln!("Failed to read config: {}", e);
-        process::exit(1);
-    });
+    let contents = std::fs::read_to_string(&path)
+        .map_err(|e| ToolkitError::config(format!("Failed to read config: {}", e)))?;
 
-    let probe: serde_yaml::Value = serde_yaml::from_str(&contents).unwrap_or_else(|e| {
-        eprintln!("Invalid YAML: {}", e);
-        process::exit(1);
-    });
+    let probe: serde_yaml::Value = serde_yaml::from_str(&contents)
+        .map_err(|e| ToolkitError::config(format!("Invalid YAML: {}", e)))?;
 
     let full: serde_yaml::Value = if config::is_encrypted(&probe) {
-        let decrypted = config::decrypt_config(&path);
-        serde_yaml::from_str(&decrypted).unwrap_or_else(|e| {
-            eprintln!("Invalid decrypted config: {}", e);
-            process::exit(1);
-        })
+        let decrypted = config::decrypt_config(&path)?;
+        serde_yaml::from_str(&decrypted)
+            .map_err(|e| ToolkitError::config(format!("Invalid decrypted config: {}", e)))?
     } else {
         probe
     };
 
-    let mapping = match full.as_mapping() {
-        Some(m) => m,
-        None => {
-            eprintln!("Config is not a YAML mapping");
-            process::exit(1);
-        }
-    };
+    let mapping = full
+        .as_mapping()
+        .ok_or_else(|| ToolkitError::config("Config is not a YAML mapping"))?;
 
     // Discover guarded apps: top-level sections where any connection has a "binary" field.
     let mut scripts: Vec<(String, String, String)> = Vec::new(); // (name, app, conn)
@@ -285,13 +282,10 @@ fn cmd_install() {
         println!("        - \"get pod|pods\"");
         println!("      deny:");
         println!("        - \"secret|secrets\"");
-        return;
+        return Ok(());
     }
 
-    let home = std::env::var("HOME").unwrap_or_else(|_| {
-        eprintln!("HOME not set");
-        process::exit(1);
-    });
+    let home = std::env::var("HOME").map_err(|_| ToolkitError::config("HOME not set"))?;
 
     let install_path = full
         .get("install_path")
@@ -299,10 +293,9 @@ fn cmd_install() {
         .unwrap_or("$HOME/.local/bin");
     let bin_dir = std::path::PathBuf::from(install_path.replace("$HOME", &home));
 
-    std::fs::create_dir_all(&bin_dir).unwrap_or_else(|e| {
-        eprintln!("Failed to create {}: {}", bin_dir.display(), e);
-        process::exit(1);
-    });
+    std::fs::create_dir_all(&bin_dir).map_err(|e| {
+        ToolkitError::other(format!("Failed to create {}: {}", bin_dir.display(), e))
+    })?;
 
     let mut installed = 0;
     for (name, app, conn) in &scripts {
@@ -337,28 +330,21 @@ fn cmd_install() {
     println!();
     println!("Add to your shell profile if not already present:");
     println!("  export PATH=\"{}:$PATH\"", install_path);
+    Ok(())
 }
 
-fn cmd_config_edit() {
-    let path = config::config_path();
+fn cmd_config_edit() -> Result<()> {
+    let path = config::config_path()?;
 
     // Ensure the config directory exists.
     if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir).unwrap_or_else(|e| {
-            eprintln!("Failed to create config directory: {}", e);
-            process::exit(1);
-        });
+        std::fs::create_dir_all(dir).map_err(|e| {
+            ToolkitError::config(format!("Failed to create config directory: {}", e))
+        })?;
     }
 
-    let key = key::get_private_key().unwrap_or_else(|e| {
-        eprintln!("Error retrieving key: {}", e);
-        process::exit(1);
-    });
-
-    let public_key = key::public_key_from_private(&key).unwrap_or_else(|e| {
-        eprintln!("Error deriving public key: {}", e);
-        process::exit(1);
-    });
+    let key = key::get_private_key()?;
+    let public_key = key::public_key_from_private(&key)?;
 
     // sops can only edit files it encrypted itself. If an existing plaintext
     // file is present, encrypt it in-place first. New (non-existent) files are
@@ -376,10 +362,8 @@ fn cmd_config_edit() {
              - COPILOT_RUN_APP\n",
             config::DEFAULT_ENCRYPTED_REGEX
         );
-        std::fs::write(&path, template).unwrap_or_else(|e| {
-            eprintln!("Failed to write default config: {}", e);
-            process::exit(1);
-        });
+        std::fs::write(&path, template)
+            .map_err(|e| ToolkitError::config(format!("Failed to write default config: {}", e)))?;
     }
 
     let encrypted_regex = config::load_encrypted_regex();
@@ -394,10 +378,7 @@ fn cmd_config_edit() {
                 .arg(&path)
                 .env("SOPS_AGE_RECIPIENTS", &public_key)
                 .status()
-                .unwrap_or_else(|e| {
-                    eprintln!("Failed to run sops: {}", e);
-                    process::exit(1);
-                });
+                .map_err(|e| ToolkitError::crypto(format!("Failed to run sops: {}", e)))?;
             if !status.success() {
                 process::exit(status.code().unwrap_or(1));
             }
@@ -411,47 +392,36 @@ fn cmd_config_edit() {
         .env("SOPS_AGE_RECIPIENTS", &public_key)
         .env_remove("SOPS_AGE_KEY_FILE")
         .status()
-        .unwrap_or_else(|e| {
-            eprintln!("Failed to run sops: {}", e);
-            process::exit(1);
-        });
+        .map_err(|e| ToolkitError::crypto(format!("Failed to run sops: {}", e)))?;
 
     if !status.success() {
         process::exit(status.code().unwrap_or(1));
     }
+    Ok(())
 }
 
-fn cmd_config_encrypt() {
-    let path = config::config_path();
+fn cmd_config_encrypt() -> Result<()> {
+    let path = config::config_path()?;
     if !path.exists() {
-        eprintln!("Config not found: {}", path.display());
-        process::exit(1);
+        return Err(ToolkitError::not_found(format!(
+            "Config not found: {}",
+            path.display()
+        )));
     }
 
-    let contents = std::fs::read_to_string(&path).unwrap_or_else(|e| {
-        eprintln!("Failed to read config: {}", e);
-        process::exit(1);
-    });
+    let contents = std::fs::read_to_string(&path)
+        .map_err(|e| ToolkitError::config(format!("Failed to read config: {}", e)))?;
 
-    let probe: serde_yaml::Value = serde_yaml::from_str(&contents).unwrap_or_else(|e| {
-        eprintln!("Invalid YAML:{}", e);
-        process::exit(1);
-    });
+    let probe: serde_yaml::Value = serde_yaml::from_str(&contents)
+        .map_err(|e| ToolkitError::config(format!("Invalid YAML: {}", e)))?;
 
     if config::is_encrypted(&probe) {
         println!("Config is already encrypted.");
-        return;
+        return Ok(());
     }
 
-    let private_key = key::get_private_key().unwrap_or_else(|e| {
-        eprintln!("Error retrieving key: {}", e);
-        process::exit(1);
-    });
-
-    let public_key = key::public_key_from_private(&private_key).unwrap_or_else(|e| {
-        eprintln!("Error deriving public key: {}", e);
-        process::exit(1);
-    });
+    let private_key = key::get_private_key()?;
+    let public_key = key::public_key_from_private(&private_key)?;
 
     let encrypted_regex = config::load_encrypted_regex();
     let status = process::Command::new("sops")
@@ -459,44 +429,37 @@ fn cmd_config_encrypt() {
         .arg(&path)
         .env("SOPS_AGE_RECIPIENTS", &public_key)
         .status()
-        .unwrap_or_else(|e| {
-            eprintln!("Failed to run sops: {}", e);
-            process::exit(1);
-        });
+        .map_err(|e| ToolkitError::crypto(format!("Failed to run sops: {}", e)))?;
 
     if !status.success() {
         process::exit(status.code().unwrap_or(1));
     }
 
     println!("Encrypted: {}", path.display());
+    Ok(())
 }
 
-fn cmd_config_decrypt() {
-    let path = config::config_path();
+fn cmd_config_decrypt() -> Result<()> {
+    let path = config::config_path()?;
     if !path.exists() {
-        eprintln!("Config not found: {}", path.display());
-        process::exit(1);
+        return Err(ToolkitError::not_found(format!(
+            "Config not found: {}",
+            path.display()
+        )));
     }
 
-    let contents = std::fs::read_to_string(&path).unwrap_or_else(|e| {
-        eprintln!("Failed to read config: {}", e);
-        process::exit(1);
-    });
+    let contents = std::fs::read_to_string(&path)
+        .map_err(|e| ToolkitError::config(format!("Failed to read config: {}", e)))?;
 
-    let probe: serde_yaml::Value = serde_yaml::from_str(&contents).unwrap_or_else(|e| {
-        eprintln!("Invalid YAML:{}", e);
-        process::exit(1);
-    });
+    let probe: serde_yaml::Value = serde_yaml::from_str(&contents)
+        .map_err(|e| ToolkitError::config(format!("Invalid YAML: {}", e)))?;
 
     if !config::is_encrypted(&probe) {
         println!("Config is not encrypted.");
-        return;
+        return Ok(());
     }
 
-    let key = key::get_private_key().unwrap_or_else(|e| {
-        eprintln!("Error retrieving key: {}", e);
-        process::exit(1);
-    });
+    let key = key::get_private_key()?;
 
     let status = process::Command::new("sops")
         .args(["--decrypt", "-i"])
@@ -504,49 +467,39 @@ fn cmd_config_decrypt() {
         .env("SOPS_AGE_KEY", key.expose_secret())
         .env_remove("SOPS_AGE_KEY_FILE")
         .status()
-        .unwrap_or_else(|e| {
-            eprintln!("Failed to run sops: {}", e);
-            process::exit(1);
-        });
+        .map_err(|e| ToolkitError::crypto(format!("Failed to run sops: {}", e)))?;
 
     if !status.success() {
         process::exit(status.code().unwrap_or(1));
     }
 
     println!("Decrypted: {}", path.display());
+    Ok(())
 }
 
-fn cmd_config_migrate() {
-    let path = config::config_path();
+fn cmd_config_migrate() -> Result<()> {
+    let path = config::config_path()?;
     if !path.exists() {
-        eprintln!("Config not found: {}", path.display());
-        process::exit(1);
+        return Err(ToolkitError::not_found(format!(
+            "Config not found: {}",
+            path.display()
+        )));
     }
 
-    let contents = std::fs::read_to_string(&path).unwrap_or_else(|e| {
-        eprintln!("Failed to read config: {}", e);
-        process::exit(1);
-    });
+    let contents = std::fs::read_to_string(&path)
+        .map_err(|e| ToolkitError::config(format!("Failed to read config: {}", e)))?;
 
-    let probe: serde_yaml::Value = serde_yaml::from_str(&contents).unwrap_or_else(|e| {
-        eprintln!("Invalid YAML: {}", e);
-        process::exit(1);
-    });
+    let probe: serde_yaml::Value = serde_yaml::from_str(&contents)
+        .map_err(|e| ToolkitError::config(format!("Invalid YAML: {}", e)))?;
 
     if !config::is_encrypted(&probe) {
-        eprintln!("Config is not encrypted — nothing to migrate.");
-        process::exit(1);
+        return Err(ToolkitError::config(
+            "Config is not encrypted — nothing to migrate.",
+        ));
     }
 
-    let key = key::get_private_key().unwrap_or_else(|e| {
-        eprintln!("Error retrieving key: {}", e);
-        process::exit(1);
-    });
-
-    let public_key = key::public_key_from_private(&key).unwrap_or_else(|e| {
-        eprintln!("Error deriving public key: {}", e);
-        process::exit(1);
-    });
+    let key = key::get_private_key()?;
+    let public_key = key::public_key_from_private(&key)?;
 
     // Decrypt in-place
     let status = process::Command::new("sops")
@@ -555,10 +508,7 @@ fn cmd_config_migrate() {
         .env("SOPS_AGE_KEY", key.expose_secret())
         .env_remove("SOPS_AGE_KEY_FILE")
         .status()
-        .unwrap_or_else(|e| {
-            eprintln!("Failed to run sops: {}", e);
-            process::exit(1);
-        });
+        .map_err(|e| ToolkitError::crypto(format!("Failed to run sops: {}", e)))?;
     if !status.success() {
         process::exit(status.code().unwrap_or(1));
     }
@@ -571,44 +521,41 @@ fn cmd_config_migrate() {
         .arg(&path)
         .env("SOPS_AGE_RECIPIENTS", &public_key)
         .status()
-        .unwrap_or_else(|e| {
-            eprintln!("Failed to run sops: {}", e);
-            process::exit(1);
-        });
+        .map_err(|e| ToolkitError::crypto(format!("Failed to run sops: {}", e)))?;
     if !status.success() {
         process::exit(status.code().unwrap_or(1));
     }
 
     println!("Migrated: {}", path.display());
     println!("Encrypted fields: {}", encrypted_regex);
+    Ok(())
 }
 
-fn cmd_config_show() {
-    let path = config::config_path();
+fn cmd_config_show() -> Result<()> {
+    let path = config::config_path()?;
     if !path.exists() {
-        eprintln!("Config not found: {}", path.display());
-        process::exit(1);
+        return Err(ToolkitError::not_found(format!(
+            "Config not found: {}",
+            path.display()
+        )));
     }
 
-    let contents = std::fs::read_to_string(&path).unwrap_or_else(|e| {
-        eprintln!("Failed to read config: {}", e);
-        process::exit(1);
-    });
+    let contents = std::fs::read_to_string(&path)
+        .map_err(|e| ToolkitError::config(format!("Failed to read config: {}", e)))?;
 
-    let probe: serde_yaml::Value = serde_yaml::from_str(&contents).unwrap_or_else(|e| {
-        eprintln!("Invalid YAML:{}", e);
-        process::exit(1);
-    });
+    let probe: serde_yaml::Value = serde_yaml::from_str(&contents)
+        .map_err(|e| ToolkitError::config(format!("Invalid YAML: {}", e)))?;
 
     if config::is_encrypted(&probe) {
-        let decrypted = config::decrypt_config(&path);
+        let decrypted = config::decrypt_config(&path)?;
         print!("{}", decrypted);
     } else {
         print!("{}", contents);
     }
+    Ok(())
 }
 
-fn cmd_config_template(app: &str) {
+fn cmd_config_template(app: &str) -> Result<()> {
     let template = match app {
         "psql" => {
             "\
@@ -655,12 +602,14 @@ msql:
 "
         }
         _ => {
-            eprintln!("Unknown app: {}", app);
-            eprintln!("Known apps: psql, dbr, msql");
-            process::exit(1);
+            return Err(ToolkitError::not_found(format!(
+                "Unknown app: {}. Known apps: psql, dbr, msql",
+                app
+            )));
         }
     };
 
     println!("# Add to your config via `toolkit config edit`:");
     print!("{}", template);
+    Ok(())
 }

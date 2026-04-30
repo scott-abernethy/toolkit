@@ -1,6 +1,7 @@
 mod dbr;
 
 use clap::{Parser, Subcommand};
+use common::{exit_with_error, Result};
 
 #[derive(Parser)]
 #[command(name = "tkdbr", about = "Databricks CLI wrapper for AI agents")]
@@ -224,9 +225,9 @@ enum AuthCmd {
 }
 
 
-fn main() {
+fn run() -> Result<()> {
     let cli = Cli::parse();
-    let config = dbr::load_config(cli.conn.as_deref());
+    let config = dbr::load_config(cli.conn.as_deref())?;
 
     match cli.command {
         Commands::Jobs { cmd } => match cmd {
@@ -281,5 +282,11 @@ fn main() {
             warehouse_id,
             limit,
         } => dbr::query(&config, &sql, warehouse_id.as_deref(), limit),
+    }
+}
+
+fn main() {
+    if let Err(e) = run() {
+        exit_with_error(e);
     }
 }

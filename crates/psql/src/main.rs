@@ -1,6 +1,7 @@
 mod psql;
 
 use clap::{Parser, Subcommand};
+use common::{exit_with_error, Result};
 
 #[derive(Parser)]
 #[command(
@@ -38,13 +39,19 @@ enum Commands {
     },
 }
 
-fn main() {
+fn run() -> Result<()> {
     let cli = Cli::parse();
-    let config = psql::load_config(cli.conn.as_deref());
+    let config = psql::load_config(cli.conn.as_deref())?;
 
     match cli.command {
         Commands::Query { sql } => psql::run_query(&config, &sql),
         Commands::Tables { schema } => psql::list_tables(&config, &schema),
         Commands::Describe { table } => psql::describe_table(&config, &table),
+    }
+}
+
+fn main() {
+    if let Err(e) = run() {
+        exit_with_error(e);
     }
 }

@@ -1,4 +1,4 @@
-use crate::exit_with_error;
+use crate::error::{Result, ToolkitError};
 use serde::de::DeserializeOwned;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -13,7 +13,9 @@ pub const DEFAULT_ENCRYPTED_REGEX: &str =
 /// The pattern itself is plaintext metadata — not matched by any reasonable
 /// pattern — so we read it from the file without decryption.
 pub fn load_encrypted_regex() -> String {
-    let path = config_path();
+    let Ok(path) = config_path() else {
+        return DEFAULT_ENCRYPTED_REGEX.to_string();
+    };
     let Ok(contents) = std::fs::read_to_string(&path) else {
         return DEFAULT_ENCRYPTED_REGEX.to_string();
     };
@@ -31,15 +33,15 @@ pub fn load_encrypted_regex() -> String {
 /// Resolve the config file path.
 /// Checks `TOOLKIT_CONFIG` env var first, then falls back to
 /// `~/.config/toolkit/config.yaml`.
-pub fn config_path() -> PathBuf {
+pub fn config_path() -> Result<PathBuf> {
     if let Ok(p) = std::env::var("TOOLKIT_CONFIG") {
-        return PathBuf::from(p);
+        return Ok(PathBuf::from(p));
     }
-    let home = std::env::var("HOME").unwrap_or_else(|_| exit_with_error("HOME not set"));
-    PathBuf::from(home)
+    let home = std::env::var("HOME").map_err(|_| ToolkitError::config("HOME not set"))?;
+    Ok(PathBuf::from(home)
         .join(".config")
         .join("toolkit")
-        .join("config.yaml")
+        .join("config.yaml"))
 }
 
 /// Return true if the parsed YAML contains sops metadata (i.e. the file is encrypted).
@@ -49,14 +51,17 @@ pub fn is_encrypted(value: &serde_yaml::Value) -> bool {
 
 /// Decrypt a sops-encrypted config file using the stored age private key.
 /// The key is passed only in the subprocess environment — it never touches disk.
-pub fn decrypt_config(path: &std::path::Path) -> String {
+pub fn decrypt_config(path: &std::path::Path) -> Result<String> {
     let key = crate::key::get_private_key()
-        .unwrap_or_else(|e| exit_with_error(format!("Failed to retrieve decryption key: {}", e)));
+        .map_err(|e| ToolkitError::crypto(format!("Failed to retrieve decryption key: {}", e)))?;
     decrypt_config_with_key(path, &key)
 }
 
 /// Decrypt a sops-encrypted config file using the provided age private key.
-pub fn decrypt_config_with_key(path: &std::path::Path, key: &secrecy::SecretString) -> String {
+pub fn decrypt_config_with_key(
+    path: &std::path::Path,
+    key: &secrecy::SecretString,
+) -> Result<String> {
     use secrecy::ExposeSecret;
 
     let output = std::process::Command::new("sops")
@@ -66,17 +71,18 @@ pub fn decrypt_config_with_key(path: &std::path::Path, key: &secrecy::SecretStri
         // Clear any ambient SOPS_AGE_KEY_FILE to avoid interference
         .env_remove("SOPS_AGE_KEY_FILE")
         .output()
-        .unwrap_or_else(|e| {
-            exit_with_error(format!("Failed to run sops (is it installed?): {}", e))
-        });
+        .map_err(|e| ToolkitError::crypto(format!("Failed to run sops (is it installed?): {}", e)))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        exit_with_error(format!("sops decryption failed: {}", stderr.trim()));
+        return Err(ToolkitError::crypto(format!(
+            "sops decryption failed: {}",
+            stderr.trim()
+        )));
     }
 
     String::from_utf8(output.stdout)
-        .unwrap_or_else(|_| exit_with_error("sops produced non-UTF-8 output"))
+        .map_err(|_| ToolkitError::crypto("sops produced non-UTF-8 output"))
 }
 
 /// Load a named section from the shared config file and deserialize it into `T`.
@@ -86,39 +92,38 @@ pub fn decrypt_config_with_key(path: &std::path::Path, key: &secrecy::SecretStri
 ///
 /// Each tool defines its own config struct and calls:
 ///   `common::load_section::<MyConfig>("mytool")`
-pub fn load_section<T: DeserializeOwned>(section: &str) -> T {
-    let path = config_path();
+pub fn load_section<T: DeserializeOwned>(section: &str) -> Result<T> {
+    let path = config_path()?;
 
-    let contents = std::fs::read_to_string(&path).unwrap_or_else(|e| {
-        exit_with_error(format!("config not found or unreadable: {}", e))
-    });
+    let contents = std::fs::read_to_string(&path)
+        .map_err(|e| ToolkitError::config(format!("config not found or unreadable: {}", e)))?;
 
     let probe: serde_yaml::Value = serde_yaml::from_str(&contents)
-        .unwrap_or_else(|e| exit_with_error(format!("Invalid config: {}", e)));
+        .map_err(|e| ToolkitError::config(format!("Invalid config: {}", e)))?;
 
     let full: serde_yaml::Value = if is_encrypted(&probe) {
-        let decrypted = decrypt_config(&path);
+        let decrypted = decrypt_config(&path)?;
         serde_yaml::from_str(&decrypted)
-            .unwrap_or_else(|e| exit_with_error(format!("Invalid decrypted config: {}", e)))
+            .map_err(|e| ToolkitError::config(format!("Invalid decrypted config: {}", e)))?
     } else {
         probe
     };
 
     let section_val = full
         .get(section)
-        .unwrap_or_else(|| exit_with_error(format!("Missing [{}] section in config", section)));
+        .ok_or_else(|| ToolkitError::config(format!("Missing [{}] section in config", section)))?;
 
     T::deserialize(section_val.clone())
-        .unwrap_or_else(|e| exit_with_error(format!("Invalid [{}] config: {}", section, e)))
+        .map_err(|e| ToolkitError::config(format!("Invalid [{}] config: {}", section, e)))
 }
 
 /// Load a named connection from a config section.
 ///
 /// If `conn` is None and exactly one connection is configured, that one is used.
-/// If `conn` is None and multiple connections exist, exits with an error
-/// listing the available names.
-pub fn load_named_section<T: DeserializeOwned>(section: &str, conn: Option<&str>) -> T {
-    load_named_section_with_name(section, conn).1
+/// If `conn` is None and multiple connections exist, returns an error listing
+/// the available names.
+pub fn load_named_section<T: DeserializeOwned>(section: &str, conn: Option<&str>) -> Result<T> {
+    load_named_section_with_name(section, conn).map(|(_, v)| v)
 }
 
 /// Like `load_named_section`, but also returns the connection name. Used by
@@ -126,28 +131,28 @@ pub fn load_named_section<T: DeserializeOwned>(section: &str, conn: Option<&str>
 pub fn load_named_section_with_name<T: DeserializeOwned>(
     section: &str,
     conn: Option<&str>,
-) -> (String, T) {
-    let mut configs = load_section::<HashMap<String, T>>(section);
+) -> Result<(String, T)> {
+    let mut configs = load_section::<HashMap<String, T>>(section)?;
 
     match conn {
         Some(name) => {
-            let value = configs.remove(name).unwrap_or_else(|| {
-                exit_with_error(format!(
+            let value = configs.remove(name).ok_or_else(|| {
+                ToolkitError::not_found(format!(
                     "Unknown connection '{}'. Available: {}",
                     name,
                     sorted_keys(&configs).join(", ")
                 ))
-            });
-            (name.to_string(), value)
+            })?;
+            Ok((name.to_string(), value))
         }
         None => {
             if configs.len() == 1 {
-                configs.into_iter().next().unwrap()
+                Ok(configs.into_iter().next().unwrap())
             } else {
-                exit_with_error(format!(
+                Err(ToolkitError::config(format!(
                     "Multiple connections configured, specify --conn. Available: {}",
                     sorted_keys(&configs).join(", ")
-                ))
+                )))
             }
         }
     }
@@ -168,7 +173,7 @@ mod tests {
     fn test_config_path_env_override() {
         let _guard = ENV_MUTEX.lock().unwrap();
         std::env::set_var("TOOLKIT_CONFIG", "/tmp/test-toolkit.yaml");
-        let result = config_path();
+        let result = config_path().unwrap();
         std::env::remove_var("TOOLKIT_CONFIG");
         assert_eq!(result, PathBuf::from("/tmp/test-toolkit.yaml"));
     }
@@ -177,7 +182,7 @@ mod tests {
     fn test_config_path_default() {
         let _guard = ENV_MUTEX.lock().unwrap();
         std::env::remove_var("TOOLKIT_CONFIG");
-        let path = config_path();
+        let path = config_path().unwrap();
         assert!(path.ends_with(".config/toolkit/config.yaml"));
     }
 
@@ -233,7 +238,7 @@ mod tests {
             serde_yaml::Value::Number(5432.into())
         );
 
-        let decrypted = decrypt_config_with_key(file.path(), &private_key);
+        let decrypted = decrypt_config_with_key(file.path(), &private_key).unwrap();
         let val: serde_yaml::Value = serde_yaml::from_str(&decrypted).unwrap();
         assert_eq!(
             val["psql"]["local"]["host"].as_str(),
@@ -260,12 +265,25 @@ mod tests {
         .unwrap();
         std::env::set_var("TOOLKIT_CONFIG", file.path());
 
-        let configs = load_section::<std::collections::HashMap<String, TestConn>>("psql");
+        let configs =
+            load_section::<std::collections::HashMap<String, TestConn>>("psql").unwrap();
         std::env::remove_var("TOOLKIT_CONFIG");
 
         let conn = configs.get("local").expect("local connection not found");
         assert_eq!(conn.host, "localhost");
         assert_eq!(conn.port, 5432);
+    }
+
+    #[test]
+    fn test_load_section_missing_returns_config_error() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        std::env::set_var("TOOLKIT_CONFIG", "/nonexistent/path/toolkit.yaml");
+        let result = load_section::<std::collections::HashMap<String, String>>("psql");
+        std::env::remove_var("TOOLKIT_CONFIG");
+        match result {
+            Err(ToolkitError::Config(_)) => {}
+            other => panic!("expected Config error, got {:?}", other),
+        }
     }
 
     /// Tests the full encrypted config path: encrypt with sops, decrypt with
@@ -290,7 +308,7 @@ mod tests {
 
         sops_encrypt(file.path(), &public_key);
 
-        let decrypted = decrypt_config_with_key(file.path(), &private_key);
+        let decrypted = decrypt_config_with_key(file.path(), &private_key).unwrap();
         let full: serde_yaml::Value = serde_yaml::from_str(&decrypted).unwrap();
         let section = full.get("psql").expect("missing psql section");
         let configs: std::collections::HashMap<String, TestConn> =

@@ -1,6 +1,5 @@
-use common::exit_with_error;
-use common::load_named_section;
 use common::sql::{self, QueryResponse};
+use common::{load_named_section, Result, ToolkitError};
 use serde::Deserialize;
 use serde_json::{Map, Value};
 use tiberius::{AuthMethod, Client, ColumnData, Config, EncryptionLevel};
@@ -42,7 +41,7 @@ impl ConnConfig {
     }
 }
 
-pub fn load_config(conn: Option<&str>) -> ConnConfig {
+pub fn load_config(conn: Option<&str>) -> Result<ConnConfig> {
     load_named_section("msql", conn)
 }
 
@@ -50,7 +49,7 @@ pub fn load_config(conn: Option<&str>) -> ConnConfig {
 // Connection
 // ---------------------------------------------------------------------------
 
-async fn connect(config: &ConnConfig) -> Client<tokio_util::compat::Compat<TcpStream>> {
+async fn connect(config: &ConnConfig) -> Result<Client<tokio_util::compat::Compat<TcpStream>>> {
     let mut host = config.host.clone();
     let mut port = config.port();
 
@@ -75,12 +74,12 @@ async fn connect(config: &ConnConfig) -> Client<tokio_util::compat::Compat<TcpSt
         let addr = format!("{}:{}", host, port);
         let tcp = TcpStream::connect(&addr)
             .await
-            .unwrap_or_else(|e| exit_with_error(sanitize_connect_error(&e)));
+            .map_err(|e| sanitize_connect_error(&e))?;
 
         tcp.set_nodelay(true).ok();
 
         match Client::connect(cfg, tcp.compat_write()).await {
-            Ok(client) => return client,
+            Ok(client) => return Ok(client),
             Err(tiberius::error::Error::Routing {
                 host: rhost,
                 port: rport,
@@ -88,45 +87,47 @@ async fn connect(config: &ConnConfig) -> Client<tokio_util::compat::Compat<TcpSt
                 host = rhost;
                 port = rport;
             }
-            Err(e) => exit_with_error(sanitize_tds_error(&e)),
+            Err(e) => return Err(sanitize_tds_error(&e)),
         }
     }
 
-    exit_with_error("too many server redirects".to_string())
+    Err(ToolkitError::connection("too many server redirects"))
 }
 
 // ---------------------------------------------------------------------------
 // Error sanitisation
 // ---------------------------------------------------------------------------
 
-fn sanitize_connect_error(e: &std::io::Error) -> String {
+fn sanitize_connect_error(e: &std::io::Error) -> ToolkitError {
     let msg = e.to_string().to_lowercase();
     if msg.contains("connection refused") {
-        "connection refused".to_string()
+        ToolkitError::connection("connection refused")
     } else if msg.contains("timed out") {
-        "connection timed out".to_string()
+        ToolkitError::connection("connection timed out")
     } else {
-        "connection failed".to_string()
+        ToolkitError::connection("connection failed")
     }
 }
 
-fn sanitize_tds_error(e: &tiberius::error::Error) -> String {
+fn sanitize_tds_error(e: &tiberius::error::Error) -> ToolkitError {
     let msg = e.to_string().to_lowercase();
     if msg.contains("login failed") || msg.contains("authentication") {
-        "authentication failed".to_string()
+        ToolkitError::auth("authentication failed")
     } else if msg.contains("cannot open database") {
-        "database does not exist".to_string()
+        ToolkitError::not_found("database does not exist")
     } else if msg.contains("permission denied") || msg.contains("not allowed") {
-        "permission denied".to_string()
+        ToolkitError::permission("permission denied")
     } else if msg.contains("ssl") || msg.contains("tls") {
-        "ssl error".to_string()
+        ToolkitError::connection("ssl error")
     } else {
         // Take only the first line to avoid leaking verbose error details.
-        e.to_string()
-            .lines()
-            .next()
-            .unwrap_or("query error")
-            .to_string()
+        ToolkitError::other(
+            e.to_string()
+                .lines()
+                .next()
+                .unwrap_or("query error")
+                .to_string(),
+        )
     }
 }
 
@@ -240,51 +241,54 @@ async fn exec_query(
     config: &ConnConfig,
     sql: &str,
     params: &[&dyn tiberius::ToSql],
-) -> Vec<Map<String, Value>> {
-    let mut client = connect(config).await;
+) -> Result<Vec<Map<String, Value>>> {
+    let mut client = connect(config).await?;
     let stream = client
         .query(sql, params)
         .await
-        .unwrap_or_else(|e| exit_with_error(sanitize_tds_error(&e)));
+        .map_err(|e| sanitize_tds_error(&e))?;
 
     let rows = stream
         .into_first_result()
         .await
-        .unwrap_or_else(|e| exit_with_error(sanitize_tds_error(&e)));
+        .map_err(|e| sanitize_tds_error(&e))?;
 
-    rows.iter()
+    Ok(rows
+        .iter()
         .map(|row| {
             row.cells()
                 .map(|(col, data)| (col.name().to_string(), cell_to_json(data)))
                 .collect()
         })
-        .collect()
+        .collect())
 }
 
 // ---------------------------------------------------------------------------
 // Subcommand implementations
 // ---------------------------------------------------------------------------
 
-pub async fn run_query(config: &ConnConfig, sql: &str) {
+pub async fn run_query(config: &ConnConfig, sql: &str) -> Result<()> {
     if let Some(table) = sql::detect_write_target(sql) {
-        sql::assert_write_allowed(config.writable_tables.as_ref(), &table);
+        sql::assert_write_allowed(config.writable_tables.as_ref(), &table)?;
     }
-    let rows = exec_query(config, sql, &[]).await;
+    let rows = exec_query(config, sql, &[]).await?;
     QueryResponse::from_rows(rows).print();
+    Ok(())
 }
 
-pub async fn list_tables(config: &ConnConfig, schema: &str) {
+pub async fn list_tables(config: &ConnConfig, schema: &str) -> Result<()> {
     let rows = exec_query(
         config,
         "SELECT table_name FROM information_schema.tables \
          WHERE table_schema = @P1 ORDER BY table_name",
         &[&schema],
     )
-    .await;
+    .await?;
     QueryResponse::from_rows(rows).print();
+    Ok(())
 }
 
-pub async fn describe_table(config: &ConnConfig, table: &str) {
+pub async fn describe_table(config: &ConnConfig, table: &str) -> Result<()> {
     let (schema, tbl) = if table.contains('.') {
         let parts: Vec<&str> = table.splitn(2, '.').collect();
         (parts[0], parts[1])
@@ -300,6 +304,7 @@ pub async fn describe_table(config: &ConnConfig, table: &str) {
          ORDER BY ordinal_position",
         &[&schema, &tbl],
     )
-    .await;
+    .await?;
     QueryResponse::from_rows(rows).print();
+    Ok(())
 }

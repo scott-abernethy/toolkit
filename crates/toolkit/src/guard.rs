@@ -1,4 +1,4 @@
-use common::exit_with_error;
+use common::{Result, ToolkitError};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::process::Command;
@@ -24,7 +24,7 @@ pub struct ConnConfig {
 
 /// Load a named connection from the given app section of the shared config.
 /// If `conn` is None and exactly one connection is configured, that one is used.
-pub fn load_config(app: &str, conn: Option<&str>) -> ConnConfig {
+pub fn load_config(app: &str, conn: Option<&str>) -> Result<ConnConfig> {
     common::load_named_section(app, conn)
 }
 
@@ -47,20 +47,21 @@ fn rule_matches(rule: &str, args: &[&str]) -> bool {
         .all(|group| group.split('|').any(|alt| args.contains(&alt)))
 }
 
-/// Evaluate allow/deny rules against args. Exits with error if denied.
+/// Evaluate allow/deny rules against args.
 ///
 /// 1. Deny checked first — any match rejects
 /// 2. Allow checked second — at least one must match (unless allow is empty)
-pub fn check_rules(config: &ConnConfig, args: &[&str]) {
+pub fn check_rules(config: &ConnConfig, args: &[&str]) -> Result<()> {
     for rule in &config.deny {
         if rule_matches(rule, args) {
-            exit_with_error("command denied");
+            return Err(ToolkitError::permission("command denied"));
         }
     }
 
     if !config.allow.is_empty() && !config.allow.iter().any(|rule| rule_matches(rule, args)) {
-        exit_with_error("command denied");
+        return Err(ToolkitError::permission("command denied"));
     }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -68,7 +69,8 @@ pub fn check_rules(config: &ConnConfig, args: &[&str]) {
 // ---------------------------------------------------------------------------
 
 /// Run the wrapped CLI with credential injection and raw passthrough.
-pub fn run(config: &ConnConfig, args: &[String]) -> ! {
+/// Returns the wrapped CLI's exit code on success.
+pub fn run(config: &ConnConfig, args: &[String]) -> Result<i32> {
     let mut cmd = Command::new(&config.binary);
 
     for (k, v) in &config.env {
@@ -77,18 +79,18 @@ pub fn run(config: &ConnConfig, args: &[String]) -> ! {
 
     cmd.args(args);
 
-    let status = cmd.status().unwrap_or_else(|e| {
+    let status = cmd.status().map_err(|e| {
         let msg = e.to_string().to_lowercase();
         if msg.contains("not found") || msg.contains("no such file") {
-            exit_with_error(format!("binary not found: {}", config.binary))
+            ToolkitError::not_found(format!("binary not found: {}", config.binary))
         } else if msg.contains("permission denied") {
-            exit_with_error(format!("permission denied: {}", config.binary))
+            ToolkitError::permission(format!("permission denied: {}", config.binary))
         } else {
-            exit_with_error(format!("failed to run {}: {}", config.binary, e))
+            ToolkitError::cli(format!("failed to run {}: {}", config.binary, e))
         }
-    });
+    })?;
 
-    std::process::exit(status.code().unwrap_or(1))
+    Ok(status.code().unwrap_or(1))
 }
 
 // ---------------------------------------------------------------------------
@@ -171,8 +173,7 @@ mod tests {
             allow: vec!["get pods".into()],
             deny: vec![],
         };
-        // Should not exit
-        check_rules(&config, &["get", "pods"]);
+        assert!(check_rules(&config, &["get", "pods"]).is_ok());
     }
 
     #[test]
@@ -183,8 +184,35 @@ mod tests {
             allow: vec![],
             deny: vec![],
         };
-        // No allow rules and no deny rules — everything passes
-        check_rules(&config, &["anything", "goes"]);
+        assert!(check_rules(&config, &["anything", "goes"]).is_ok());
+    }
+
+    #[test]
+    fn test_check_rules_denied_by_deny() {
+        let config = ConnConfig {
+            binary: "test".into(),
+            env: HashMap::new(),
+            allow: vec![],
+            deny: vec!["secret|secrets".into()],
+        };
+        match check_rules(&config, &["get", "secrets"]) {
+            Err(ToolkitError::Permission(_)) => {}
+            other => panic!("expected Permission, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_check_rules_denied_by_no_allow_match() {
+        let config = ConnConfig {
+            binary: "test".into(),
+            env: HashMap::new(),
+            allow: vec!["get pods".into()],
+            deny: vec![],
+        };
+        match check_rules(&config, &["delete", "pods"]) {
+            Err(ToolkitError::Permission(_)) => {}
+            other => panic!("expected Permission, got {:?}", other),
+        }
     }
 
     // -- load_config ----------------------------------------------------------
@@ -200,7 +228,7 @@ mod tests {
 
         let _guard = ENV_MUTEX.lock().unwrap();
         std::env::set_var("TOOLKIT_CONFIG", file.path());
-        let config = load_config("myapp", None);
+        let config = load_config("myapp", None).unwrap();
         std::env::remove_var("TOOLKIT_CONFIG");
 
         assert_eq!(config.binary, "echo");
@@ -217,7 +245,7 @@ mod tests {
 
         let _guard = ENV_MUTEX.lock().unwrap();
         std::env::set_var("TOOLKIT_CONFIG", file.path());
-        let config = load_config("myapp", Some("b"));
+        let config = load_config("myapp", Some("b")).unwrap();
         std::env::remove_var("TOOLKIT_CONFIG");
 
         assert_eq!(config.binary, "beta");

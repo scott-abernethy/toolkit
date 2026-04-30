@@ -1,4 +1,4 @@
-use crate::exit_with_error;
+use crate::error::{Result, ToolkitError};
 use serde::Serialize;
 use serde_json::{Map, Value};
 
@@ -66,11 +66,11 @@ pub fn detect_write_target(sql: &str) -> Option<String> {
 }
 
 /// Checks whether a write to `table` is permitted by the given allowlist.
-/// Exits with an error if not.
-pub fn assert_write_allowed(writable_tables: Option<&Vec<String>>, table: &str) {
+/// Returns a `WriteDenied` error if not.
+pub fn assert_write_allowed(writable_tables: Option<&Vec<String>>, table: &str) -> Result<()> {
     let allowed = match writable_tables {
         Some(list) if !list.is_empty() => list,
-        _ => exit_with_error(format!("write to '{}' denied", table)),
+        _ => return Err(ToolkitError::write_denied(format!("write to '{}' denied", table))),
     };
 
     let normalised = strip_schema(table).to_lowercase();
@@ -78,8 +78,12 @@ pub fn assert_write_allowed(writable_tables: Option<&Vec<String>>, table: &str) 
         .iter()
         .any(|t| strip_schema(t).to_lowercase() == normalised)
     {
-        exit_with_error(format!("write to '{}' denied", table));
+        return Err(ToolkitError::write_denied(format!(
+            "write to '{}' denied",
+            table
+        )));
     }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -211,11 +215,33 @@ mod tests {
     #[test]
     fn test_assert_write_allowed_permits() {
         let tables = vec!["orders".into()];
-        assert_write_allowed(Some(&tables), "orders");
-        assert_write_allowed(Some(&tables), "public.orders");
+        assert!(assert_write_allowed(Some(&tables), "orders").is_ok());
+        assert!(assert_write_allowed(Some(&tables), "public.orders").is_ok());
     }
 
-    // Note: assert_write_allowed denial cannot be tested directly because
-    // exit_with_error calls process::exit(1), which terminates the process
-    // rather than panicking.
+    #[test]
+    fn test_assert_write_allowed_denies_when_empty() {
+        let tables: Vec<String> = vec![];
+        match assert_write_allowed(Some(&tables), "orders") {
+            Err(ToolkitError::WriteDenied(_)) => {}
+            other => panic!("expected WriteDenied, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_assert_write_allowed_denies_when_none() {
+        match assert_write_allowed(None, "orders") {
+            Err(ToolkitError::WriteDenied(_)) => {}
+            other => panic!("expected WriteDenied, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_assert_write_allowed_denies_table_not_in_list() {
+        let tables = vec!["orders".into()];
+        match assert_write_allowed(Some(&tables), "users") {
+            Err(ToolkitError::WriteDenied(_)) => {}
+            other => panic!("expected WriteDenied, got {:?}", other),
+        }
+    }
 }
