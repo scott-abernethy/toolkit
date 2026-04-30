@@ -57,10 +57,11 @@ re-run it to update the root-owned daemon binary at `/usr/local/bin/toolkit-daem
 > Run it immediately after `brew install` — before starting any agent session — to
 > prevent a hostile agent from tampering with it prior to the `sudo` invocation.
 
-For Databricks OAuth login, run as `_toolkit` after daemon setup:
+For Databricks OAuth login, run as yourself (the browser opens on your desktop):
 ```sh
-sudo -u _toolkit env HOME=/var/lib/toolkit toolkit dbr login --conn <name>
+tkdbr auth login --conn <name>
 ```
+The PKCE flow runs locally, and the resulting tokens are stored by the daemon in its secure home directory. Tokens are automatically refreshed before expiry on subsequent calls.
 
 ---
 
@@ -218,27 +219,24 @@ To require Touch ID for agent-to-daemon connections, use `sudo` as the transport
 
 This is out of scope for the daemon itself but is a natural next layer.
 
-## Databricks OAuth login (`toolkit dbr login`)
+## Databricks OAuth login (`tkdbr auth login`)
 
-`toolkit dbr login` runs the native Databricks OAuth U2M (PKCE) flow entirely in Rust — no `databricks` CLI auth required. It:
+`tkdbr auth login` runs the native Databricks OAuth U2M (PKCE) flow entirely in Rust — no `databricks` CLI auth required. It:
 
 1. Generates a PKCE verifier/challenge pair and random state
 2. Prints an authorization URL for the user to open in a browser
 3. Listens locally on port 8020–8030 for the OAuth redirect callback
 4. Exchanges the code for access + refresh tokens
-5. Saves tokens to `$HOME/.config/toolkit/dbr-oauth/<conn>.json` (mode 0600)
+5. Sends the tokens to the daemon via socket (`auth/store_tokens`)
+6. Daemon stores tokens at `/var/lib/toolkit/.config/toolkit/dbr-oauth/<conn>.json` (mode 0600, readable only by `_toolkit`)
 
-Tokens are auto-refreshed before expiry by `get_effective_token`, so `toolkit dbr login` only needs to be re-run when the refresh token expires (typically after 30–90 days depending on workspace policy).
+Tokens are auto-refreshed before expiry on every `tkdbr` call, so `tkdbr auth login` only needs to be re-run when the refresh token expires (typically after 30–90 days depending on workspace policy).
 
-Since credentials must live in the `_toolkit` user's config area, run as `_toolkit` after daemon setup:
+Run as yourself — the browser opens on your desktop:
 
 ```sh
-sudo -u _toolkit env HOME=/var/lib/toolkit toolkit dbr login --conn dev
+tkdbr auth login --conn dev
 ```
-
-Token files are stored at `/var/lib/toolkit/.config/toolkit/dbr-oauth/<conn>.json` (readable only by `_toolkit`).
-
-The `toolkit` binary has agent-detection protection — agents cannot invoke it directly.
 
 ## Known limitations
 

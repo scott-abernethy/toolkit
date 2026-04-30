@@ -114,23 +114,6 @@ enum Commands {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true, last = true)]
         args: Vec<String>,
     },
-    /// Databricks admin commands
-    Dbr {
-        #[command(subcommand)]
-        cmd: DbrCmd,
-    },
-}
-
-#[derive(Subcommand)]
-enum DbrCmd {
-    /// Log in to Databricks via OAuth browser flow.
-    /// Must be run as the _toolkit user (e.g. sudo -u _toolkit env HOME=/var/lib/toolkit toolkit dbr login).
-    /// Writes OAuth credentials to $HOME/.config/toolkit/tkdbr-config so the daemon can use them.
-    Login {
-        /// Named connection from config (e.g. dev, prod). Required if multiple connections exist.
-        #[arg(long)]
-        conn: Option<String>,
-    },
 }
 
 #[derive(Subcommand)]
@@ -241,12 +224,6 @@ fn run() -> Result<i32> {
             }
             guard::run(&config, &args)
         }
-        Commands::Dbr { cmd } => {
-            match cmd {
-                DbrCmd::Login { conn } => cmd_dbr_login(conn.as_deref())?,
-            }
-            Ok(0)
-        }
     }
 }
 
@@ -255,60 +232,6 @@ fn main() {
         Ok(code) => process::exit(code),
         Err(e) => exit_with_error(e),
     }
-}
-
-fn cmd_dbr_login(conn: Option<&str>) -> Result<()> {
-    let config = tkdbr::load_config(conn)?;
-    let host = config
-        .env
-        .get("DATABRICKS_HOST")
-        .ok_or_else(|| ToolkitError::config("DATABRICKS_HOST not set in config env"))?
-        .clone();
-
-    let (verifier, challenge) = tkdbr::oauth::generate_pkce()?;
-    let state = tkdbr::oauth::generate_state();
-
-    // Find an available port in the 8020-8030 range
-    let mut listener_opt = None;
-    let mut port_used = 0u16;
-    for p in 8020u16..=8030 {
-        if let Ok(l) = tkdbr::oauth::bind_callback_listener(p) {
-            listener_opt = Some(l);
-            port_used = p;
-            break;
-        }
-    }
-    let listener = listener_opt
-        .ok_or_else(|| ToolkitError::other("All ports 8020-8030 are in use"))?;
-
-    let redirect_uri = format!("http://localhost:{}", port_used);
-    let auth_url = format!(
-        "{}/oidc/v1/authorize?client_id=databricks-cli&redirect_uri={}&response_type=code&state={}&code_challenge={}&code_challenge_method=S256&scope=all-apis+offline_access",
-        host.trim_end_matches('/'),
-        tkdbr::oauth::url_encode(&redirect_uri),
-        state,
-        challenge,
-    );
-
-    eprintln!("Open this URL in your browser:");
-    eprintln!("\n  {}\n", auth_url);
-    eprintln!("Waiting for authentication (5 minute timeout)...");
-
-    let code = tkdbr::oauth::wait_for_callback(
-        listener,
-        &state,
-        std::time::Duration::from_secs(300),
-    )?;
-
-    let tokens = tkdbr::oauth::exchange_code(&host, &code, &verifier, &redirect_uri)?;
-
-    let conn_name = conn.unwrap_or(&config.conn_name);
-    let path = tkdbr::oauth::token_file_path(conn_name)?;
-    tkdbr::oauth::write_token_file(&path, &tokens)?;
-
-    eprintln!("Authentication successful. Tokens saved to: {}", path.display());
-    println!("{}", serde_json::json!({"ok": true}));
-    Ok(())
 }
 
 fn cmd_init() -> Result<()> {

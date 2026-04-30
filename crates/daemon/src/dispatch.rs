@@ -291,6 +291,13 @@ fn dispatch_dbr_sync(
             let only = opt_str(params, "only");
             to_value_result(tkdbr::bundle_run(config, name, only))
         }
+        "auth/store_tokens" => {
+            let tokens: tkdbr::oauth::TokenPair = match serde_json::from_value(params.clone()) {
+                Ok(t) => t,
+                Err(e) => return Response::err(format!("invalid token params: {e}")),
+            };
+            to_value_result(tkdbr::store_oauth_tokens(&config.conn_name, &tokens))
+        }
         other => Response::err(format!("dbr: unknown op: {other}")),
     }
 }

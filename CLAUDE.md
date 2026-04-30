@@ -90,7 +90,7 @@ If one connection is configured, `--conn` is optional; if multiple exist, `--con
 - Bundle operations: `validate`, `deploy`, `run`
 - Commands: `catalogs`, `schemas`, `tables`, `jobs`, `runs`, `clusters`, `warehouses`, `bundle`, `query`, `auth login`
 - Output includes sensible defaults (e.g., `--limit 25` for jobs, `--limit 100` for queries)
-- `auth login` for Databricks OAuth is handled via `toolkit dbr login` (admin command, runs directly in user space)
+- `tkdbr auth login` runs the native OAuth U2M (PKCE) flow in user space, then sends tokens to the daemon via socket to store securely in `_toolkit`'s home
 
 ### `toolkit guard` (CLI Guard)
 

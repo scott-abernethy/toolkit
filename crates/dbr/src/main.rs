@@ -16,6 +16,11 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Authenticate with Databricks via browser (OAuth U2M PKCE flow)
+    Auth {
+        #[command(subcommand)]
+        cmd: AuthCmd,
+    },
     /// List and inspect jobs
     Jobs {
         #[command(subcommand)]
@@ -216,6 +221,68 @@ fn print_json(v: &Value) {
     println!("{}", serde_json::to_string(v).unwrap());
 }
 
+#[derive(Subcommand)]
+enum AuthCmd {
+    /// Log in via browser (OAuth U2M PKCE). Tokens stored by the daemon.
+    Login,
+}
+
+fn cmd_auth_login(conn: Option<&str>) -> Result<()> {
+    let config = tkdbr::load_config(conn)?;
+    let host = config
+        .env
+        .get("DATABRICKS_HOST")
+        .ok_or_else(|| common::ToolkitError::config("DATABRICKS_HOST not set in config env"))?
+        .clone();
+
+    let (verifier, challenge) = tkdbr::oauth::generate_pkce()?;
+    let state = tkdbr::oauth::generate_state();
+
+    let mut listener_opt = None;
+    let mut port_used = 0u16;
+    for p in 8020u16..=8030 {
+        if let Ok(l) = tkdbr::oauth::bind_callback_listener(p) {
+            listener_opt = Some(l);
+            port_used = p;
+            break;
+        }
+    }
+    let listener = listener_opt
+        .ok_or_else(|| common::ToolkitError::other("All ports 8020-8030 are in use"))?;
+
+    let redirect_uri = format!("http://localhost:{}", port_used);
+    let auth_url = format!(
+        "{}/oidc/v1/authorize?client_id=databricks-cli&redirect_uri={}&response_type=code&state={}&code_challenge={}&code_challenge_method=S256&scope=all-apis+offline_access",
+        host.trim_end_matches('/'),
+        tkdbr::oauth::url_encode(&redirect_uri),
+        state,
+        challenge,
+    );
+
+    eprintln!("Open this URL in your browser:\n\n  {}\n", auth_url);
+    eprintln!("Waiting for authentication (5 minute timeout)...");
+
+    let code = tkdbr::oauth::wait_for_callback(
+        listener,
+        &state,
+        std::time::Duration::from_secs(300),
+    )?;
+
+    let tokens = tkdbr::oauth::exchange_code(&host, &code, &verifier, &redirect_uri)?;
+
+    // Send tokens to the daemon to store in its secure home directory
+    let req = common::protocol::Request {
+        tool: "dbr".to_owned(),
+        conn: Some(config.conn_name.clone()),
+        op: "auth/store_tokens".to_owned(),
+        params: serde_json::to_value(&tokens).unwrap(),
+    };
+    let result = common::client::send(&req)?;
+    print_json(&result);
+    eprintln!("Authentication successful.");
+    Ok(())
+}
+
 fn command_to_request(conn: Option<String>, command: &Commands) -> Request {
     let (op, params): (&str, Value) = match command {
         Commands::Jobs { cmd } => match cmd {
@@ -263,6 +330,8 @@ fn command_to_request(conn: Option<String>, command: &Commands) -> Request {
             "query",
             json!({"sql": sql, "warehouse_id": warehouse_id, "limit": limit}),
         ),
+        // Auth is handled before command_to_request is called (see run())
+        Commands::Auth { .. } => unreachable!(),
     };
     Request {
         tool: "dbr".to_owned(),
@@ -274,6 +343,14 @@ fn command_to_request(conn: Option<String>, command: &Commands) -> Request {
 
 fn run() -> Result<()> {
     let cli = Cli::parse();
+
+    // Auth login runs locally (browser flow) then sends tokens to daemon
+    if let Commands::Auth { cmd } = &cli.command {
+        return match cmd {
+            AuthCmd::Login => cmd_auth_login(cli.conn.as_deref()),
+        };
+    }
+
     let req = command_to_request(cli.conn, &cli.command);
     let result = common::client::send(&req)?;
     print_json(&result);

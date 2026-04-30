@@ -104,7 +104,7 @@ pub fn get_effective_token(config: &ConnConfig) -> Result<Option<String>> {
                         // Near expiry but still valid — use it
                     } else {
                         return Err(ToolkitError::auth(format!(
-                            "Databricks token expired and refresh failed: {}. Run: toolkit dbr login --conn {}",
+                            "Databricks token expired and refresh failed: {}. Run: tkdbr auth login --conn {}",
                             e, config.conn_name
                         )));
                     }
@@ -112,13 +112,21 @@ pub fn get_effective_token(config: &ConnConfig) -> Result<Option<String>> {
             }
         } else if tokens.expires_at <= now {
             return Err(ToolkitError::auth(format!(
-                "Databricks token expired. Run: toolkit dbr login --conn {}",
+                "Databricks token expired. Run: tkdbr auth login --conn {}",
                 config.conn_name
             )));
         }
     }
 
     Ok(Some(tokens.access_token))
+}
+
+/// Store OAuth tokens in the token file for the given connection.
+/// Called by the daemon in response to an `auth/store_tokens` request.
+pub fn store_oauth_tokens(conn: &str, tokens: &crate::oauth::TokenPair) -> Result<Value> {
+    let path = crate::oauth::token_file_path(conn)?;
+    crate::oauth::write_token_file(&path, tokens)?;
+    Ok(json!({"ok": true}))
 }
 
 /// Run a `databricks` subcommand and return parsed JSON output.
