@@ -41,8 +41,8 @@ pub fn send(req: &Request) -> Result<Value> {
     let n = reader
         .read_line(&mut response_line)
         .map_err(|e| ToolkitError::daemon(format!("read from socket: {e}")))?;
-    if n > 1 << 20 {
-        return Err(ToolkitError::daemon("daemon response too large (> 1 MiB)"));
+    if n > 64 << 20 {
+        return Err(ToolkitError::daemon("daemon response too large (> 64 MiB)"));
     }
 
     let resp: Response = serde_json::from_str(response_line.trim()).map_err(|e| {
