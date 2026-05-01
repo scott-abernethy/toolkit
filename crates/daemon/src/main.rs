@@ -29,12 +29,20 @@ fn peer_uid(fd: std::os::unix::io::RawFd) -> Option<u32> {
     let mut uid: libc::uid_t = 0;
     let mut gid: libc::gid_t = 0;
     let ret = unsafe { libc::getpeereid(fd, &mut uid, &mut gid) };
-    if ret == 0 { Some(uid) } else { None }
+    if ret == 0 {
+        Some(uid)
+    } else {
+        None
+    }
 }
 
 #[cfg(target_os = "linux")]
 fn peer_uid(fd: std::os::unix::io::RawFd) -> Option<u32> {
-    let mut ucred = libc::ucred { pid: 0, uid: 0, gid: 0 };
+    let mut ucred = libc::ucred {
+        pid: 0,
+        uid: 0,
+        gid: 0,
+    };
     let mut len = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
     let ret = unsafe {
         libc::getsockopt(
@@ -45,7 +53,11 @@ fn peer_uid(fd: std::os::unix::io::RawFd) -> Option<u32> {
             &mut len,
         )
     };
-    if ret == 0 { Some(ucred.uid) } else { None }
+    if ret == 0 {
+        Some(ucred.uid)
+    } else {
+        None
+    }
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
@@ -57,10 +69,7 @@ fn peer_uid(_fd: std::os::unix::io::RawFd) -> Option<u32> {
 // Connection handler
 // ---------------------------------------------------------------------------
 
-async fn handle_connection(
-    mut stream: tokio::net::UnixStream,
-    allowed_uids: Option<Vec<u32>>,
-) {
+async fn handle_connection(mut stream: tokio::net::UnixStream, allowed_uids: Option<Vec<u32>>) {
     // Peer UID check — fail closed if UID unavailable or not in allowlist.
     let fd = stream.as_raw_fd();
     match peer_uid(fd) {
@@ -152,14 +161,11 @@ fn cleanup_stale_socket(path: &str) {
 
 #[tokio::main]
 async fn main() {
-    let daemon_config: DaemonConfig =
-        common::load_section("daemon").unwrap_or_default();
+    let daemon_config: DaemonConfig = common::load_section("daemon").unwrap_or_default();
 
-    let socket_path = daemon_config
-        .socket_path
-        .unwrap_or_else(|| {
-            std::env::var("TOOLKIT_SOCKET").unwrap_or_else(|_| DEFAULT_SOCKET.to_owned())
-        });
+    let socket_path = daemon_config.socket_path.unwrap_or_else(|| {
+        std::env::var("TOOLKIT_SOCKET").unwrap_or_else(|_| DEFAULT_SOCKET.to_owned())
+    });
 
     cleanup_stale_socket(&socket_path);
 

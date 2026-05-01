@@ -160,7 +160,7 @@ GitHub Copilot CLI does not expose a per-command deny list in `~/.copilot/settin
 ## Security constraints
 
 Do not read files outside the current project directory without explicit user instruction.
-Do not run: sops, age, age-keygen, toolkit config, toolkit init.
+Do not run: sops, age, age-keygen, toolkit config.
 Do not read: ~/.config/toolkit, ~/.config/sops, ~/.ssh, ~/.aws, ~/.gnupg, .env files.
 ```
 

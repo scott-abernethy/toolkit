@@ -6,7 +6,7 @@ Guidance for AI agents and human contributors working on toolkit. The same conte
 
 **Toolkit** is a security and access-control layer between AI coding agents and sensitive network services (datastores, execution environments, monitoring systems). It provides CLI tools that enforce safety boundaries (read-only by default, explicit write allowlists), hide credentials from agent context, and produce token-efficient JSON output. Built as a Cargo workspace in Rust.
 
-Tools have two operating modes: **CLI mode** (tools run as the agent's UID, sharing a trust boundary) and **daemon mode** (`toolkit-daemon` runs as a separate `_toolkit` system user that owns the age key and config; CLI tools connect over a UNIX socket with peer-UID enforcement).
+`toolkit-daemon` runs as a dedicated `_toolkit` system user that owns the config; CLI tools (`tkpsql`, `tkmsql`, `tkdbr`) connect over a UNIX socket with peer-UID enforcement. The `toolkit guard` fetches config from the daemon but executes wrapped CLIs locally (preserving streaming and interactivity).
 
 ## Build & Development Commands
 
@@ -34,12 +34,12 @@ Rust toolchain is managed via asdf (see `.tool-versions`).
 
 ```
 crates/
-  common/   # shared library: config loading, error types, daemon protocol + client
+  common/   # shared library: config loading, error types, guard types, daemon protocol + client
   psql/     # tkpsql binary + lib — PostgreSQL query tool
   msql/     # tkmsql binary + lib — MS SQL Server query tool
   dbr/      # tkdbr binary + lib — Databricks CLI wrapper
   daemon/   # toolkit-daemon binary — separate-UID dispatch process
-  toolkit/  # toolkit binary — key/config management + CLI guard
+  toolkit/  # toolkit binary — daemon config management + CLI guard
 hooks/      # harness hook recipes (Claude Code, opencode)
 skills/     # SKILL.md definitions for opencode integration
 agents/     # *.agent.md definitions for GitHub Copilot CLI
@@ -59,7 +59,8 @@ Adding a new operation means: add the function to the lib, add a CLI subcommand 
 ### Common Library (`crates/common`)
 
 All tools share:
-- `load_section::<T>(section)` / `load_named_section::<T>(section, conn)` — load a section of `~/.config/toolkit/config.yaml` (override with `TOOLKIT_CONFIG`) into a typed struct
+- `load_section::<T>(section)` / `load_named_section::<T>(section, conn)` — load a section of the daemon's `config.yaml` (override with `TOOLKIT_CONFIG`) into a typed struct
+- `guard::{ConnConfig, check_rules, run, load_config}` — shared guard types and logic used by both daemon dispatch and the CLI
 - `ToolkitError` / `Result<T>` — structured errors with caller-distinguishable variants (Auth, Connection, NotFound, Permission, Daemon, Other)
 - `ErrorResponse` + `exit_with_error(err)` — binary-entrypoint helper that prints `{"error": "..."}` to stdout and exits 1
 - `protocol::{Request, Response}` — daemon wire types
@@ -95,6 +96,7 @@ If one connection is configured, `--conn` is optional; if multiple exist, `--con
 ### `toolkit guard` (CLI Guard)
 
 - Wraps any CLI with credential injection and command allow/deny rules, configured entirely in YAML
+- Guard config is fetched from the daemon via socket (`guard/config` op); rule checking and CLI execution happen locally, preserving streaming and interactivity
 - New services added via config, not new Rust crates — use for CLIs that already produce usable output
 - Token-based allow/deny rules with `|` alternatives for plurals/aliases (e.g. `"get pod|pods"`)
 - `toolkit install` generates wrapper scripts named `tk<app>-<conn>` into the `install_path` from config (defaults to `$HOME/.local/bin`)
@@ -102,16 +104,16 @@ If one connection is configured, `--conn` is optional; if multiple exist, `--con
 
 ### `toolkit-daemon` (Separate-UID Transport)
 
-- Long-running process owned by a dedicated `_toolkit` system user; only the daemon UID can read the config and age key
+- Long-running process owned by a dedicated `_toolkit` system user; only the daemon UID can read the config
 - Listens on a UNIX socket (`/tmp/toolkit.sock` by default; override with `TOOLKIT_SOCKET` or `daemon.socket_path` in config)
 - Enforces peer UID via `getpeereid` (macOS) / `SO_PEERCRED` (Linux); optional `daemon.allowed_uids` allowlist
-- Dispatches requests to per-tool lib functions; 1 MiB frame limit, 120s read timeout
-- Fails closed: stale-socket cleanup refuses to unlink non-socket files; CLI client returns `ToolkitError::Daemon` if the socket is unreachable rather than silently falling back to direct mode
+- Dispatches requests to per-tool lib functions (psql, msql, dbr) and guard config requests; 1 MiB frame limit, 120s read timeout
+- Fails closed: stale-socket cleanup refuses to unlink non-socket files; CLI client returns `ToolkitError::Daemon` if the socket is unreachable
 - Setup: see `docs/daemon.md`
 
 ### Credential Injection
 
-All credentials must live in toolkit's `config.yaml` — never in external config files (e.g. `~/.databrickscfg`). When a tool wraps an external CLI, it injects credentials via environment variables at invocation time. This ensures a single file to encrypt and no plaintext credential files for agents to discover. New tools that wrap external CLIs must follow this pattern.
+All credentials must live in the daemon's `config.yaml` (`/var/lib/toolkit/.config/toolkit/config.yaml`) — never in external config files (e.g. `~/.databrickscfg`). When a tool wraps an external CLI, it injects credentials via environment variables at invocation time. This ensures a single file to protect and no plaintext credential files for agents to discover. New tools that wrap external CLIs must follow this pattern.
 
 ### Output Philosophy
 
@@ -148,7 +150,7 @@ Every token an agent reads costs time and money. Tools should produce **minimal,
 
 ## Configuration
 
-All tools share `~/.config/toolkit/config.yaml`:
+All tools share the daemon's config file at `/var/lib/toolkit/.config/toolkit/config.yaml` (owned by `_toolkit`, mode 0600). Manage with `toolkit config edit` (requires sudo).
 
 ```yaml
 # Top-level settings
@@ -174,22 +176,19 @@ dbr:
     allow_job_runs: false
     bundle_target: dev
 
-# Optional — only relevant when running the daemon
 daemon:
   socket_path: /tmp/toolkit.sock
   allowed_uids: [501, 502]
 ```
-
-In daemon mode the config lives at `~_toolkit/.config/toolkit/config.yaml` (e.g. `/var/lib/toolkit/.config/toolkit/config.yaml`) and is readable only by the `_toolkit` user.
 
 ## Adding a New Tool
 
 1. `cargo init crates/<name>` (e.g. `crates/foo` → binary `tkfoo`)
 2. Add `"crates/<name>"` to `members` in the root `Cargo.toml`
 3. Add `common = { path = "../common" }` to the new crate's dependencies
-4. Split the implementation into `lib.rs` (transport-agnostic functions returning `Result<T, ToolkitError>`) and `main.rs` (clap parsing + `print_json` + optional daemon dispatch via `common::client::send`)
-5. Add a `[name]` section to `~/.config/toolkit/config.yaml` and load it with `common::load_named_section`
-6. If the tool should be daemon-dispatchable, expose a lib target in `Cargo.toml`, add the crate as a dep in `crates/daemon/Cargo.toml`, and add dispatch arms in `crates/daemon/src/dispatch.rs`
+4. Split the implementation into `lib.rs` (transport-agnostic functions returning `Result<T, ToolkitError>`) and `main.rs` (clap parsing + daemon dispatch via `common::client::send`)
+5. Add a `[name]` section to the daemon config and load it with `common::load_named_section`
+6. Expose a lib target in `Cargo.toml`, add the crate as a dep in `crates/daemon/Cargo.toml`, and add dispatch arms in `crates/daemon/src/dispatch.rs`
 7. Tools should be self-documenting via `--help`; prefer subcommands over positional args; fail fast rather than prompting
 
 ## Conventions

@@ -12,19 +12,16 @@ AI coding agents (Claude Code, GitHub Copilot CLI, opencode, etc.) are increasin
 
 ## Threat Model
 
-Toolkit has two operating modes with different ceilings:
+`toolkit-daemon` runs as a dedicated `_toolkit` system user that owns the config file. The agent UID has no read access. CLI tools (`tkpsql` et al.) connect over a UNIX socket with peer-UID enforcement. Combined with sandboxing the agent itself (sandbox-exec, bwrap, container), this defeats a hostile agent on a single box.
 
-- **CLI mode (default install)**: tools run as the same OS user as the agent. Toolkit raises the floor against an *agent's mistakes* — accidental writes, exploratory queries that hit prod, leaking credentials by reading the wrong file — but a hostile agent that *wants* to read `~/.config/sops/age/keys.txt` or invoke `sops` directly still can. Pair this mode with the harness hook recipes in `hooks/` to close the casual-leak path.
-- **Daemon mode (separate UID)**: `toolkit-daemon` runs as a dedicated `_toolkit` system user that owns the age key and config; the agent UID has no read access. CLI tools (`tkpsql` et al.) connect over a UNIX socket with peer-UID enforcement. Combined with sandboxing the agent itself (sandbox-exec, bwrap, container), this is the configuration that actually defeats a hostile agent on a single box. See [docs/daemon.md](docs/daemon.md) for setup.
-
-In both modes, defence is layered: toolkit's own checks sit on top of (a) harness denylists like `Bash(toolkit:*)` and `Bash(sops:*)`, (b) per-tool agent hooks that block access to `~/.config/toolkit` and `~/.config/sops`, and (c) DB-side GRANTs / read-only roles. Treat toolkit's own checks as defence-in-depth on top of those, not as the only line.
+Defence is layered: toolkit's own checks sit on top of (a) harness denylists like `Bash(toolkit:*)` and `Bash(sops:*)`, (b) per-tool agent hooks that block access to credential stores, and (c) DB-side GRANTs / read-only roles. Treat toolkit's own checks as defence-in-depth on top of those, not as the only line.
 
 ## What Toolkit Does
 
 Toolkit is a safety kit that sits between AI agents and upstream services. Each tool in the kit:
 
 1. **Enforces a default-deny posture for writes** — Postgres connections are session-level read-only at the server (the strongest control here, enforced by Postgres itself); MS SQL relies on `db_datareader` role. An optional `writable_tables` allowlist enables specific writes; client-side write detection is a sanity check on top of DB-side privileges, not a substitute for them.
-2. **Reduces credential leak surface** — credentials live in a single sops-encrypted file and are injected into wrapped CLIs as env vars at exec time. Agents never see credentials in argv, in their config files, or in tool output. In CLI mode this protects against backups, accidental commits, prompt logs, and incurious agents — not against an agent that decides to read the key file. In daemon mode the agent UID can't read the file at all.
+2. **Reduces credential leak surface** — credentials live in a single config file owned by the `_toolkit` daemon user (mode 0600) and are injected into wrapped CLIs as env vars at exec time. Agents never see credentials in argv, in their config files, or in tool output.
 3. **Produces token-efficient output** — compact JSON with no decoration, no verbose metadata envelopes, and sensible default limits. Designed for direct consumption by LLMs.
 4. **Fails safely** — errors are returned as structured JSON (not stack traces), with credentials scrubbed from error messages.
 
@@ -36,14 +33,14 @@ Toolkit is a safety kit that sits between AI agents and upstream services. Each 
 brew tap scott-abernethy/tap
 brew install scott-abernethy/tap/toolkit
 
-brew install sops   # required for config encryption
+# Run the privileged setup script (creates _toolkit user, installs LaunchDaemon)
+sudo $(brew --prefix)/opt/toolkit/libexec/setup-daemon.sh
 
-# Initialize (generates an age keypair for config encryption)
+# Configure connections
+toolkit config edit   # opens daemon config in $EDITOR via sudo
 
-toolkit init
-
-# Configure a connection
-toolkit config edit   # creates ~/.config/toolkit/config.yaml and opens $EDITOR
+# Verify the daemon is running
+toolkit status
 
 # Use it
 tkpsql tables
@@ -64,15 +61,17 @@ Toolkit has two kinds of tool: **native clients** that implement protocol-level 
 
 Native clients earn their complexity — `tkpsql` enforces read-only at the Postgres session level and does type-aware JSON conversion; `tkmsql` provides the same for MS SQL Server via the TDS protocol; `tkdbr` compacts verbose Databricks API responses into token-efficient output. `tkpsql` and `tkmsql` share write-detection and config-loading logic via `common::sql`. These are worth maintaining as dedicated crates because the upstream services need protocol-level handling that a generic wrapper can't provide.
 
-Each native client is a thin CLI over a transport-agnostic library. The CLI dispatches to `toolkit-daemon` over a UNIX socket; the daemon holds all credentials and calls the library on the agent's behalf. See [docs/daemon.md](docs/daemon.md).
+Each native client is a thin CLI over a transport-agnostic library. The CLI dispatches to `toolkit-daemon` over a UNIX socket; the daemon holds all credentials and calls the library on the agent's behalf. See [docs/daemon.md](docs/daemon.md) for setup.
 
 ### Guard (`toolkit guard`)
 
 For CLI tools where the main value is credential hiding and command gating — not protocol-level safety or output reshaping — `toolkit guard` wraps any CLI with:
 
-- **Credential injection** — env vars from config, never passed as arguments
+- **Credential injection** — env vars fetched from the daemon, never stored locally or passed as arguments
 - **Command allow/deny rules** — token-based matching with `|` alternatives for plurals/aliases
 - **Raw passthrough** — stdout/stderr forwarded as-is; the wrapped CLI handles its own output format
+
+Guard fetches its config from the daemon (via `guard/config` socket request), then checks rules and executes the CLI locally. This preserves streaming output and interactivity while keeping credentials in the daemon's protected config.
 
 Adding a new service requires only a config stanza, not a new Rust crate:
 
@@ -163,13 +162,15 @@ just install-hooks
 
 See [docs/hooks.md](docs/hooks.md) for full instructions, coverage details, and Copilot CLI notes.
 
-## Daemon Mode (separate UID)
+## Daemon Setup
 
-`toolkit-daemon` runs as a dedicated `_toolkit` system user that owns the age key and config. CLI tools connect to it over a UNIX socket; the daemon checks the peer UID, reads the config that the agent UID can't see, and dispatches the call. This is the configuration that closes the structural gap of CLI mode — a hostile agent under its own UID cannot read `~_toolkit/.config/toolkit/config.yaml` or invoke `sops` against the age key.
+`toolkit-daemon` runs as a dedicated `_toolkit` system user that owns the config. CLI tools connect to it over a UNIX socket; the daemon checks the peer UID, reads the config that the agent UID can't see, and dispatches the call.
 
 ```sh
 # After setup (see docs/daemon.md):
-tkpsql tables            # routes through the daemon
+toolkit status               # check daemon is running
+tkpsql tables                # routes through the daemon
+tkkubectl-dev get pods       # guard fetches config from daemon
 ```
 
 See [docs/daemon.md](docs/daemon.md) for full setup, including peer-UID enforcement details.
@@ -186,7 +187,7 @@ Toolkit occupies a gap in the current ecosystem. Existing approaches each solve 
 
 **What's missing everywhere:**
 
-- **Credential leak-surface reduction as a first-class feature.** [Research by Knostic](https://www.knostic.ai/blog/claude-cursor-env-file-secret-leakage) documented coding agents silently loading `.env` files and leaking API keys. Toolkit puts credentials in one encrypted file and injects them into wrapped CLIs at exec time — closing the casual-leak path (logs, transcripts, backups, accidental commits) without claiming to defeat a determined hostile agent.
+- **Credential leak-surface reduction as a first-class feature.** [Research by Knostic](https://www.knostic.ai/blog/claude-cursor-env-file-secret-leakage) documented coding agents silently loading `.env` files and leaking API keys. Toolkit puts credentials in a single config file owned by a dedicated system user and injects them into wrapped CLIs at exec time — the agent UID never has read access to the config.
 - **Token-efficient output.** Verbose API responses are the norm. Inspiration for this came from [rtk](https://github.com/rtk-ai/rtk).
 - **DB-side privileges as the control, not statement parsing.** Most existing solutions try to police writes by parsing SQL — a losing arms race against CTEs, side-effecting functions, and dialect quirks. Toolkit defers to the database: Postgres connections enable `default_transaction_read_only` server-side, and MS SQL relies on `db_datareader`. Client-side write detection is present but only as defence-in-depth on top of DB-side privileges.
 - **Protocol independence.** MCP servers only work with MCP-compatible hosts. CLI tools work with any agent harness that can shell out.

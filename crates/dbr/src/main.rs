@@ -216,7 +216,6 @@ enum BundleCmd {
     },
 }
 
-
 fn print_json(v: &Value) {
     println!("{}", serde_json::to_string(v).unwrap());
 }
@@ -262,20 +261,25 @@ fn cmd_auth_login(conn: Option<&str>) -> Result<()> {
     eprintln!("Open this URL in your browser:\n\n  {}\n", auth_url);
     // Try to open the browser automatically; fall back to printing the URL
     let opened = if cfg!(target_os = "macos") {
-        std::process::Command::new("open").arg(&auth_url).status().map(|s| s.success()).unwrap_or(false)
+        std::process::Command::new("open")
+            .arg(&auth_url)
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
     } else {
-        std::process::Command::new("xdg-open").arg(&auth_url).status().map(|s| s.success()).unwrap_or(false)
+        std::process::Command::new("xdg-open")
+            .arg(&auth_url)
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
     };
     if !opened {
         eprintln!("Open this URL in your browser:\n\n  {}\n", auth_url);
     }
     eprintln!("Waiting for authentication (5 minute timeout)...");
 
-    let code = tkdbr::oauth::wait_for_callback(
-        listener,
-        &state,
-        std::time::Duration::from_secs(300),
-    )?;
+    let code =
+        tkdbr::oauth::wait_for_callback(listener, &state, std::time::Duration::from_secs(300))?;
 
     let tokens = tkdbr::oauth::exchange_code(&host, &code, &verifier, &redirect_uri)?;
 
@@ -300,7 +304,9 @@ fn command_to_request(conn: Option<String>, command: &Commands) -> Request {
             JobsCmd::Trigger { job_id } => ("jobs/trigger", json!({"job_id": job_id})),
         },
         Commands::Runs { cmd } => match cmd {
-            RunsCmd::List { job_id, limit } => ("runs/list", json!({"job_id": job_id, "limit": limit})),
+            RunsCmd::List { job_id, limit } => {
+                ("runs/list", json!({"job_id": job_id, "limit": limit}))
+            }
             RunsCmd::Get { run_id } => ("runs/get", json!({"run_id": run_id})),
             RunsCmd::Output { run_id } => ("runs/output", json!({"run_id": run_id})),
         },
@@ -310,22 +316,37 @@ fn command_to_request(conn: Option<String>, command: &Commands) -> Request {
         },
         Commands::Warehouses { cmd } => match cmd {
             WarehousesCmd::List => ("warehouses/list", json!({})),
-            WarehousesCmd::Get { warehouse_id } => ("warehouses/get", json!({"warehouse_id": warehouse_id})),
+            WarehousesCmd::Get { warehouse_id } => {
+                ("warehouses/get", json!({"warehouse_id": warehouse_id}))
+            }
         },
         Commands::Catalogs { cmd } => match cmd {
             CatalogsCmd::List { limit } => ("catalogs/list", json!({"limit": limit})),
             CatalogsCmd::Get { catalog } => ("catalogs/get", json!({"catalog": catalog})),
         },
         Commands::Schemas { cmd } => match cmd {
-            SchemasCmd::List { catalog, limit } => ("schemas/list", json!({"catalog": catalog, "limit": limit})),
-            SchemasCmd::Get { catalog, schema } => ("schemas/get", json!({"catalog": catalog, "schema": schema})),
+            SchemasCmd::List { catalog, limit } => {
+                ("schemas/list", json!({"catalog": catalog, "limit": limit}))
+            }
+            SchemasCmd::Get { catalog, schema } => {
+                ("schemas/get", json!({"catalog": catalog, "schema": schema}))
+            }
         },
         Commands::Tables { cmd } => match cmd {
-            TablesCmd::List { catalog, schema, limit, omit_columns } => (
+            TablesCmd::List {
+                catalog,
+                schema,
+                limit,
+                omit_columns,
+            } => (
                 "tables/list",
                 json!({"catalog": catalog, "schema": schema, "limit": limit, "omit_columns": omit_columns}),
             ),
-            TablesCmd::Get { catalog, schema, table } => (
+            TablesCmd::Get {
+                catalog,
+                schema,
+                table,
+            } => (
                 "tables/get",
                 json!({"catalog": catalog, "schema": schema, "table": table}),
             ),
@@ -335,7 +356,11 @@ fn command_to_request(conn: Option<String>, command: &Commands) -> Request {
             BundleCmd::Deploy => ("bundle/deploy", json!({})),
             BundleCmd::Run { name, only } => ("bundle/run", json!({"name": name, "only": only})),
         },
-        Commands::Query { sql, warehouse_id, limit } => (
+        Commands::Query {
+            sql,
+            warehouse_id,
+            limit,
+        } => (
             "query",
             json!({"sql": sql, "warehouse_id": warehouse_id, "limit": limit}),
         ),

@@ -82,7 +82,9 @@ pub fn write_token_file(path: &Path, tokens: &TokenPair) -> Result<()> {
             .truncate(true)
             .mode(0o600)
             .open(&tmp_path)
-            .map_err(|e| ToolkitError::other(format!("Failed to open token file for writing: {}", e)))?;
+            .map_err(|e| {
+                ToolkitError::other(format!("Failed to open token file for writing: {}", e))
+            })?;
 
         let content = serde_json::to_string(tokens)
             .map_err(|e| ToolkitError::other(format!("Failed to serialize tokens: {}", e)))?;
@@ -137,7 +139,12 @@ fn unix_now() -> u64 {
 }
 
 /// Exchange an authorization code for a token pair.
-pub fn exchange_code(host: &str, code: &str, verifier: &str, redirect_uri: &str) -> Result<TokenPair> {
+pub fn exchange_code(
+    host: &str,
+    code: &str,
+    verifier: &str,
+    redirect_uri: &str,
+) -> Result<TokenPair> {
     let url = format!("{}/oidc/v1/token", host.trim_end_matches('/'));
     let body = format!(
         "client_id=databricks-cli&grant_type=authorization_code&code={}&code_verifier={}&redirect_uri={}&scope=all-apis+offline_access",
@@ -241,18 +248,16 @@ pub fn wait_for_callback(
     let (tx, rx) = std::sync::mpsc::channel();
     let expected_state = expected_state.to_string();
 
-    std::thread::spawn(move || {
-        match listener.accept() {
-            Ok((mut stream, _)) => {
-                let result = handle_callback_request(&mut stream, &expected_state);
-                let _ = tx.send(result);
-            }
-            Err(e) => {
-                let _ = tx.send(Err(ToolkitError::other(format!(
-                    "Failed to accept connection: {}",
-                    e
-                ))));
-            }
+    std::thread::spawn(move || match listener.accept() {
+        Ok((mut stream, _)) => {
+            let result = handle_callback_request(&mut stream, &expected_state);
+            let _ = tx.send(result);
+        }
+        Err(e) => {
+            let _ = tx.send(Err(ToolkitError::other(format!(
+                "Failed to accept connection: {}",
+                e
+            ))));
         }
     });
 
@@ -394,7 +399,10 @@ mod tests {
 
     #[test]
     fn test_url_encode_special() {
-        assert_eq!(url_encode("http://localhost:8020"), "http%3A%2F%2Flocalhost%3A8020");
+        assert_eq!(
+            url_encode("http://localhost:8020"),
+            "http%3A%2F%2Flocalhost%3A8020"
+        );
     }
 
     #[test]
@@ -432,7 +440,8 @@ mod tests {
 
     #[test]
     fn test_parse_callback_line_oauth_error() {
-        let line = "GET /?error=access_denied&error_description=User+denied+access&state=mystate HTTP/1.1";
+        let line =
+            "GET /?error=access_denied&error_description=User+denied+access&state=mystate HTTP/1.1";
         let result = parse_callback_line(line, "mystate");
         assert!(result.is_err());
         assert!(result.unwrap_err().message().contains("User denied access"));

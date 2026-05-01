@@ -15,13 +15,12 @@ pub const DEFAULT_SOCKET: &str = "/tmp/toolkit.sock";
 /// **Fail-closed**: if the daemon is unreachable, returns `Err(ToolkitError::Daemon)`.
 /// There is no automatic fallback to direct mode — use `--direct` for that.
 pub fn send(req: &Request) -> Result<Value> {
-    let socket_path = std::env::var("TOOLKIT_SOCKET")
-        .unwrap_or_else(|_| DEFAULT_SOCKET.to_owned());
+    let socket_path = std::env::var("TOOLKIT_SOCKET").unwrap_or_else(|_| DEFAULT_SOCKET.to_owned());
 
     let mut stream = UnixStream::connect(&socket_path).map_err(|e| {
         ToolkitError::daemon(format!(
             "cannot reach toolkit daemon at {socket_path}: {e}. \
-             Start the daemon with `toolkit-daemon` or pass --direct to bypass."
+             Start the daemon with `toolkit-daemon` or check `toolkit status`."
         ))
     })?;
 
@@ -45,9 +44,8 @@ pub fn send(req: &Request) -> Result<Value> {
         return Err(ToolkitError::daemon("daemon response too large (> 64 MiB)"));
     }
 
-    let resp: Response = serde_json::from_str(response_line.trim()).map_err(|e| {
-        ToolkitError::daemon(format!("invalid response from daemon: {e}"))
-    })?;
+    let resp: Response = serde_json::from_str(response_line.trim())
+        .map_err(|e| ToolkitError::daemon(format!("invalid response from daemon: {e}")))?;
 
     if resp.ok {
         Ok(resp.result.unwrap_or(Value::Null))

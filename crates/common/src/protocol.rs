@@ -27,10 +27,18 @@ pub struct Response {
 
 impl Response {
     pub fn ok(result: Value) -> Self {
-        Self { ok: true, result: Some(result), error: None }
+        Self {
+            ok: true,
+            result: Some(result),
+            error: None,
+        }
     }
 
     pub fn err(msg: impl Into<String>) -> Self {
-        Self { ok: false, result: None, error: Some(msg.into()) }
+        Self {
+            ok: false,
+            result: None,
+            error: Some(msg.into()),
+        }
     }
 }

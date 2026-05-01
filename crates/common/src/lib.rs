@@ -2,6 +2,7 @@ pub mod client;
 pub mod config;
 pub mod error;
 pub mod errorlog;
+pub mod guard;
 pub mod key;
 pub mod protocol;
 pub mod sql;

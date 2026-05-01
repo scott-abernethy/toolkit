@@ -2360,7 +2360,6 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "common",
- "secrecy",
  "serde",
  "serde_json",
  "serde_yaml",
@@ -2375,6 +2374,7 @@ dependencies = [
  "libc",
  "serde",
  "serde_json",
+ "serde_yaml",
  "tkdbr",
  "tkmsql",
  "tkpsql",

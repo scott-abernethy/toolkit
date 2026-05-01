@@ -175,10 +175,7 @@ fn run_databricks(config: &ConnConfig, args: &[&str]) -> Result<Value> {
         } else {
             stdout.trim().to_string()
         };
-        common::errorlog::append(
-            &format!("dbr/{} {:?}", config.conn_name, args),
-            &raw_msg,
-        );
+        common::errorlog::append(&format!("dbr/{} {:?}", config.conn_name, args), &raw_msg);
         return Err(sanitize_cli_error(&raw_msg));
     }
 
@@ -206,10 +203,7 @@ fn run_databricks_no_json(config: &ConnConfig, args: &[&str]) -> Result<(String,
         } else {
             stdout.trim().to_string()
         };
-        common::errorlog::append(
-            &format!("dbr/{} {:?}", config.conn_name, args),
-            &raw_msg,
-        );
+        common::errorlog::append(&format!("dbr/{} {:?}", config.conn_name, args), &raw_msg);
         return Err(sanitize_cli_error(&raw_msg));
     }
 
@@ -277,7 +271,6 @@ fn run_databricks_api_get(config: &ConnConfig, path: &str) -> Result<Value> {
     serde_json::from_slice::<Value>(&output.stdout)
         .map_err(|e| ToolkitError::cli(format!("Failed to parse API response: {}", e)))
 }
-
 
 /// Strip credentials and reduce noisy CLI error messages to a single actionable line.
 fn sanitize_cli_error(msg: &str) -> ToolkitError {

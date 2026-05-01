@@ -56,6 +56,7 @@ Required repository settings in this repo:
 1. `cargo init crates/<name>` (e.g. `crates/foo` → binary `tkfoo`)
 2. Add `"crates/<name>"` to `members` in the root `Cargo.toml`
 3. Add `common = { path = "../common" }` to the new crate's dependencies
-4. Add a `[name]` section to `~/.config/toolkit/config.yaml` if the tool needs config
-5. Use `common::load_section::<MyConfig>("name")` to load it
-6. See `AGENTS.md` for output conventions and token efficiency guidelines
+4. Add a `[name]` section to the daemon config if the tool needs config
+5. Use `common::load_section::<MyConfig>("name")` to load it in the lib
+6. Expose a lib target, add the crate as a dep in `crates/daemon/Cargo.toml`, and add dispatch arms in `crates/daemon/src/dispatch.rs`
+7. See `AGENTS.md` for output conventions and token efficiency guidelines

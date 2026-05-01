@@ -1,16 +1,14 @@
 # Configuration
 
-All tools share a single config file at `~/.config/toolkit/config.yaml`. Each tool has its own section within that file.
+All tools share a single config file at `/var/lib/toolkit/.config/toolkit/config.yaml`, owned by the `_toolkit` daemon user. The config is plaintext (mode 0600, readable only by `_toolkit`).
 
-The config file path can be overridden with the `TOOLKIT_CONFIG` environment variable.
+The config file path can be overridden with the `TOOLKIT_CONFIG` environment variable (used by the daemon process).
 
 If only one connection is configured for a tool, `--conn` can be omitted. If multiple connections exist, `--conn` is required — the tool will list available connections if it is missing.
 
 ## Setup
 
-Prerequisites: `sops` must be installed (`brew install sops` on macOS).
-
-Run `toolkit init` once to generate an age keypair, then use `toolkit config edit` to open the config in `$EDITOR` via sops. The file is encrypted on save.
+Run `toolkit config edit` to open the daemon config in `$EDITOR` via sudo. Use `toolkit config template <app>` to see example config for each tool.
 
 ## tkpsql
 
@@ -102,9 +100,9 @@ dbr:
     bundle_target: prod
 ```
 
-## daemon (optional)
+## daemon
 
-`toolkit-daemon` reads an optional `daemon:` section. Only relevant if you run the daemon — see [docs/daemon.md](daemon.md).
+`toolkit-daemon` reads a `daemon:` section from its config. See [docs/daemon.md](daemon.md) for full setup.
 
 ```yaml
 daemon:

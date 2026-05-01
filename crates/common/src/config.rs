@@ -71,7 +71,9 @@ pub fn decrypt_config_with_key(
         // Clear any ambient SOPS_AGE_KEY_FILE to avoid interference
         .env_remove("SOPS_AGE_KEY_FILE")
         .output()
-        .map_err(|e| ToolkitError::crypto(format!("Failed to run sops (is it installed?): {}", e)))?;
+        .map_err(|e| {
+            ToolkitError::crypto(format!("Failed to run sops (is it installed?): {}", e))
+        })?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -265,8 +267,7 @@ mod tests {
         .unwrap();
         std::env::set_var("TOOLKIT_CONFIG", file.path());
 
-        let configs =
-            load_section::<std::collections::HashMap<String, TestConn>>("psql").unwrap();
+        let configs = load_section::<std::collections::HashMap<String, TestConn>>("psql").unwrap();
         std::env::remove_var("TOOLKIT_CONFIG");
 
         let conn = configs.get("local").expect("local connection not found");

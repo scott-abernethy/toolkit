@@ -1,8 +1,7 @@
 mod guard;
 
 use clap::{Parser, Subcommand};
-use common::{client, config, exit_with_error, key, Result, ToolkitError};
-use secrecy::ExposeSecret;
+use common::{client, exit_with_error, Result, ToolkitError};
 use std::os::unix::net::UnixStream;
 use std::process;
 
@@ -11,9 +10,7 @@ const DAEMON_CONFIG_PATH: &str = "/var/lib/toolkit/.config/toolkit/config.yaml";
 
 /// Default environment variables set by known AI agent harnesses.
 /// If any are present, toolkit refuses to run — agents must not be able to
-/// invoke key/config management commands (e.g. `toolkit config show` would
-/// defeat the entire encryption scheme).
-/// These can be overridden via the `harness_detection.env` config section.
+/// invoke config management commands.
 const DEFAULT_AGENT_ENV_VARS: &[&str] = &[
     "CLAUDECODE",      // Claude Code (claude.ai/code)
     "OPENCODE",        // opencode (sst/opencode)
@@ -21,52 +18,13 @@ const DEFAULT_AGENT_ENV_VARS: &[&str] = &[
     "COPILOT_RUN_APP", // GitHub Copilot CLI (run app context)
 ];
 
-/// Load harness env var names from config, falling back to compiled defaults.
-/// Since these names are not sensitive, they remain plaintext even in encrypted
-/// configs — no decryption needed.
-fn load_agent_env_vars() -> Vec<String> {
-    let path = match config::config_path() {
-        Ok(p) => p,
-        Err(_) => return defaults(),
-    };
-    if !path.exists() {
-        return defaults();
-    }
-    let contents = match std::fs::read_to_string(&path) {
-        Ok(c) => c,
-        Err(_) => return defaults(),
-    };
-    let value: serde_yaml::Value = match serde_yaml::from_str(&contents) {
-        Ok(v) => v,
-        Err(_) => return defaults(),
-    };
-    match value
-        .get("harness_detection")
-        .and_then(|h| h.get("env"))
-        .and_then(|e| e.as_sequence())
-    {
-        Some(seq) => seq
-            .iter()
-            .filter_map(|v| v.as_str().map(|s| s.to_string()))
-            .collect(),
-        None => defaults(),
-    }
-}
-
-fn defaults() -> Vec<String> {
-    DEFAULT_AGENT_ENV_VARS
-        .iter()
-        .map(|s| s.to_string())
-        .collect()
-}
-
 fn not_permitted() -> ! {
     eprintln!("Not permitted");
     process::exit(77);
 }
 
 fn reject_if_agent() {
-    for var in &load_agent_env_vars() {
+    for var in DEFAULT_AGENT_ENV_VARS {
         if std::env::var(var).is_ok() {
             not_permitted();
         }
@@ -74,7 +32,7 @@ fn reject_if_agent() {
 }
 
 #[derive(Parser)]
-#[command(name = "toolkit", about = "Toolkit key and config management")]
+#[command(name = "toolkit", about = "Toolkit daemon management and CLI guard")]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -82,20 +40,15 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Generate an age keypair and store it in the OS keychain
-    Init,
-    /// Manage the encrypted config file
+    /// Manage the daemon config file (requires sudo)
     Config {
         #[command(subcommand)]
         cmd: ConfigCmd,
     },
-    /// Generate guarded wrapper scripts in ~/.config/toolkit/bin
+    /// Show daemon status: socket path and reachability
+    Status,
+    /// Generate guarded wrapper scripts
     Install,
-    /// Manage the toolkit daemon
-    Daemon {
-        #[command(subcommand)]
-        cmd: DaemonCmd,
-    },
     /// Run a CLI through the toolkit guard (used by generated wrapper scripts)
     Guard {
         /// App name — matches config section (e.g. kubectl, pup)
@@ -117,45 +70,20 @@ enum Commands {
 }
 
 #[derive(Subcommand)]
-enum DaemonCmd {
-    /// Manage the daemon's config file (requires sudo)
-    Config {
-        #[command(subcommand)]
-        cmd: DaemonConfigCmd,
-    },
-    /// Show daemon status: socket path and reachability
-    Status,
-}
-
-#[derive(Subcommand)]
-enum DaemonConfigCmd {
+enum ConfigCmd {
     /// Open the daemon config in $EDITOR (runs as _toolkit via sudo)
     Edit,
     /// Print the daemon config with secrets masked (runs as _toolkit via sudo)
     Show,
-}
-
-#[derive(Subcommand)]
-enum ConfigCmd {
-    /// Open the config in $EDITOR via sops (handles encrypt/decrypt automatically)
-    Edit,
-    /// Encrypt config.toml in-place using the stored age key
-    Encrypt,
-    /// Decrypt config.toml in-place (leaves plaintext on disk — use with caution)
-    Decrypt,
-    /// Print the decrypted config to stdout
-    Show,
-    /// Print a config template for a known app (e.g. psql, dbr)
+    /// Print a config template for a known app (e.g. psql, dbr, msql)
     Template {
-        /// App name (psql, dbr)
+        /// App name (psql, dbr, msql)
         app: String,
     },
-    /// Re-encrypt config with the current encrypted-regex (run after toolkit upgrade)
-    Migrate,
 }
 
 fn is_agent() -> bool {
-    load_agent_env_vars()
+    DEFAULT_AGENT_ENV_VARS
         .iter()
         .any(|var| std::env::var(var).is_ok())
 }
@@ -175,34 +103,21 @@ fn run() -> Result<i32> {
     };
 
     // Guard is invoked by generated wrapper scripts in agent context — allow it.
-    // All other commands (init, config, install) must be blocked for agents.
+    // All other commands (config, install, status) must be blocked for agents.
     if !matches!(cli.command, Commands::Guard { .. }) {
         reject_if_agent();
     }
     match cli.command {
-        Commands::Init => {
-            cmd_init()?;
-            Ok(0)
-        }
         Commands::Config { cmd } => {
             match cmd {
                 ConfigCmd::Edit => cmd_config_edit()?,
-                ConfigCmd::Encrypt => cmd_config_encrypt()?,
-                ConfigCmd::Decrypt => cmd_config_decrypt()?,
                 ConfigCmd::Show => cmd_config_show()?,
                 ConfigCmd::Template { app } => cmd_config_template(&app)?,
-                ConfigCmd::Migrate => cmd_config_migrate()?,
             }
             Ok(0)
         }
-        Commands::Daemon { cmd } => {
-            match cmd {
-                DaemonCmd::Config { cmd } => match cmd {
-                    DaemonConfigCmd::Edit => cmd_daemon_config_edit()?,
-                    DaemonConfigCmd::Show => cmd_daemon_config_show()?,
-                },
-                DaemonCmd::Status => cmd_daemon_status()?,
-            }
+        Commands::Status => {
+            cmd_status()?;
             Ok(0)
         }
         Commands::Install => {
@@ -234,80 +149,22 @@ fn main() {
     }
 }
 
-fn cmd_init() -> Result<()> {
-    let (private_key, public_key) = key::generate_keypair();
-
-    let path = key::write_key_file(&private_key)?;
-    println!("Wrote private key to {} (mode 0600)", path.display());
-
-    println!("Public key (age recipient): {}", public_key);
-    println!();
-    println!("Next steps:");
-    println!("  toolkit config edit              edit the config via sops + $EDITOR");
-    println!();
-    println!("Agent harness configuration:");
-    println!("  toolkit blocks known agent env vars at runtime.");
-    println!("  Defaults: CLAUDECODE, OPENCODE, COPILOT_CLI, COPILOT_RUN_APP");
-    println!("  Customize via harness_detection.env in config.yaml.");
-    println!("  You may also want to add an explicit deny rule in your harness settings:");
-    println!();
-    println!("  Claude Code (~/.claude/settings.json):");
-    println!("    {{\"permissions\": {{\"deny\": [\"Bash(toolkit:*)\"]}}}}");
-    Ok(())
-}
-
 fn cmd_install() -> Result<()> {
-    let path = config::config_path()?;
-    if !path.exists() {
-        return Err(ToolkitError::config(format!(
-            "Config not found: {}. Run `toolkit init` first, then `toolkit config edit` to add connections.",
-            path.display()
-        )));
-    }
-
-    let contents = std::fs::read_to_string(&path)
-        .map_err(|e| ToolkitError::config(format!("Failed to read config: {}", e)))?;
-
-    let probe: serde_yaml::Value = serde_yaml::from_str(&contents)
-        .map_err(|e| ToolkitError::config(format!("Invalid YAML: {}", e)))?;
-
-    let full: serde_yaml::Value = if config::is_encrypted(&probe) {
-        let decrypted = config::decrypt_config(&path)?;
-        serde_yaml::from_str(&decrypted)
-            .map_err(|e| ToolkitError::config(format!("Invalid decrypted config: {}", e)))?
-    } else {
-        probe
+    // Fetch guard apps and install_path from the daemon
+    let req = common::protocol::Request {
+        tool: "guard".into(),
+        conn: None,
+        op: "list".into(),
+        params: serde_json::json!({}),
     };
+    let value = client::send(&req)?;
 
-    let mapping = full
-        .as_mapping()
-        .ok_or_else(|| ToolkitError::config("Config is not a YAML mapping"))?;
+    let apps = value
+        .get("apps")
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| ToolkitError::other("unexpected response from daemon"))?;
 
-    // Discover guarded apps: top-level sections where any connection has a "command" field.
-    let mut scripts: Vec<(String, String, String)> = Vec::new(); // (name, app, conn)
-    for (section_key, section_val) in mapping {
-        let app = match section_key.as_str() {
-            Some(s) => s,
-            None => continue,
-        };
-        let conns = match section_val.as_mapping() {
-            Some(m) => m,
-            None => continue,
-        };
-        for (conn_key, conn_val) in conns {
-            let conn = match conn_key.as_str() {
-                Some(s) => s,
-                None => continue,
-            };
-            // A guarded connection has a "command" field
-            if conn_val.get("command").and_then(|v| v.as_str()).is_some() {
-                let name = format!("tk{}-{}", app, conn);
-                scripts.push((name, app.to_string(), conn.to_string()));
-            }
-        }
-    }
-
-    if scripts.is_empty() {
+    if apps.is_empty() {
         println!("No guarded apps found in config.");
         println!("Guarded app connections have a 'command' field. Example:");
         println!();
@@ -325,7 +182,7 @@ fn cmd_install() -> Result<()> {
 
     let home = std::env::var("HOME").map_err(|_| ToolkitError::config("HOME not set"))?;
 
-    let install_path = full
+    let install_path = value
         .get("install_path")
         .and_then(|v| v.as_str())
         .unwrap_or("$HOME/.local/bin");
@@ -336,8 +193,15 @@ fn cmd_install() -> Result<()> {
     })?;
 
     let mut installed = 0;
-    for (name, app, conn) in &scripts {
-        let script_path = bin_dir.join(name);
+    for entry in apps {
+        let app = entry.get("app").and_then(|v| v.as_str()).unwrap_or("");
+        let conn = entry.get("conn").and_then(|v| v.as_str()).unwrap_or("");
+        if app.is_empty() || conn.is_empty() {
+            continue;
+        }
+
+        let name = format!("tk{}-{}", app, conn);
+        let script_path = bin_dir.join(&name);
         let script = format!(
             "#!/bin/sh\nexec toolkit guard --app {} --conn {} -- \"$@\"\n",
             app, conn
@@ -372,239 +236,6 @@ fn cmd_install() -> Result<()> {
 }
 
 fn cmd_config_edit() -> Result<()> {
-    let path = config::config_path()?;
-
-    // Ensure the config directory exists.
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir).map_err(|e| {
-            ToolkitError::config(format!("Failed to create config directory: {}", e))
-        })?;
-    }
-
-    let key = key::get_private_key()?;
-    let public_key = key::public_key_from_private(&key)?;
-
-    // sops can only edit files it encrypted itself. If an existing plaintext
-    // file is present, encrypt it in-place first. New (non-existent) files are
-    // seeded with a default template before sops opens the editor.
-    if !path.exists() {
-        let template = format!(
-            "# Toolkit config. Managed by `toolkit config edit`. Sensitive data encrypted.\n\
-             install_path: \"$HOME/.local/bin\"\n\
-             encrypted_regex: \"{}\"\n\n\
-             harness_detection:\n  \
-             env:\n    \
-             - CLAUDECODE\n    \
-             - OPENCODE\n    \
-             - COPILOT_CLI\n    \
-             - COPILOT_RUN_APP\n",
-            config::DEFAULT_ENCRYPTED_REGEX
-        );
-        std::fs::write(&path, template)
-            .map_err(|e| ToolkitError::config(format!("Failed to write default config: {}", e)))?;
-    }
-
-    let encrypted_regex = config::load_encrypted_regex();
-
-    if path.exists() {
-        let contents = std::fs::read_to_string(&path).unwrap_or_default();
-        let probe: serde_yaml::Value =
-            serde_yaml::from_str(&contents).unwrap_or(serde_yaml::Value::Null);
-        if !config::is_encrypted(&probe) {
-            let status = process::Command::new("sops")
-                .args(["--encrypt", "--encrypted-regex", &encrypted_regex, "-i"])
-                .arg(&path)
-                .env("SOPS_AGE_RECIPIENTS", &public_key)
-                .status()
-                .map_err(|e| ToolkitError::crypto(format!("Failed to run sops: {}", e)))?;
-            if !status.success() {
-                process::exit(status.code().unwrap_or(1));
-            }
-        }
-    }
-
-    let status = process::Command::new("sops")
-        .args(["--encrypted-regex", &encrypted_regex])
-        .arg(&path)
-        .env("SOPS_AGE_KEY", key.expose_secret())
-        .env("SOPS_AGE_RECIPIENTS", &public_key)
-        .env_remove("SOPS_AGE_KEY_FILE")
-        .status()
-        .map_err(|e| ToolkitError::crypto(format!("Failed to run sops: {}", e)))?;
-
-    if !status.success() {
-        process::exit(status.code().unwrap_or(1));
-    }
-    Ok(())
-}
-
-fn cmd_config_encrypt() -> Result<()> {
-    let path = config::config_path()?;
-    if !path.exists() {
-        return Err(ToolkitError::not_found(format!(
-            "Config not found: {}",
-            path.display()
-        )));
-    }
-
-    let contents = std::fs::read_to_string(&path)
-        .map_err(|e| ToolkitError::config(format!("Failed to read config: {}", e)))?;
-
-    let probe: serde_yaml::Value = serde_yaml::from_str(&contents)
-        .map_err(|e| ToolkitError::config(format!("Invalid YAML: {}", e)))?;
-
-    if config::is_encrypted(&probe) {
-        println!("Config is already encrypted.");
-        return Ok(());
-    }
-
-    let private_key = key::get_private_key()?;
-    let public_key = key::public_key_from_private(&private_key)?;
-
-    let encrypted_regex = config::load_encrypted_regex();
-    let status = process::Command::new("sops")
-        .args(["--encrypt", "--encrypted-regex", &encrypted_regex, "-i"])
-        .arg(&path)
-        .env("SOPS_AGE_RECIPIENTS", &public_key)
-        .status()
-        .map_err(|e| ToolkitError::crypto(format!("Failed to run sops: {}", e)))?;
-
-    if !status.success() {
-        process::exit(status.code().unwrap_or(1));
-    }
-
-    println!("Encrypted: {}", path.display());
-    Ok(())
-}
-
-fn cmd_config_decrypt() -> Result<()> {
-    let path = config::config_path()?;
-    if !path.exists() {
-        return Err(ToolkitError::not_found(format!(
-            "Config not found: {}",
-            path.display()
-        )));
-    }
-
-    let contents = std::fs::read_to_string(&path)
-        .map_err(|e| ToolkitError::config(format!("Failed to read config: {}", e)))?;
-
-    let probe: serde_yaml::Value = serde_yaml::from_str(&contents)
-        .map_err(|e| ToolkitError::config(format!("Invalid YAML: {}", e)))?;
-
-    if !config::is_encrypted(&probe) {
-        println!("Config is not encrypted.");
-        return Ok(());
-    }
-
-    let key = key::get_private_key()?;
-
-    let status = process::Command::new("sops")
-        .args(["--decrypt", "-i"])
-        .arg(&path)
-        .env("SOPS_AGE_KEY", key.expose_secret())
-        .env_remove("SOPS_AGE_KEY_FILE")
-        .status()
-        .map_err(|e| ToolkitError::crypto(format!("Failed to run sops: {}", e)))?;
-
-    if !status.success() {
-        process::exit(status.code().unwrap_or(1));
-    }
-
-    println!("Decrypted: {}", path.display());
-    Ok(())
-}
-
-fn cmd_config_migrate() -> Result<()> {
-    let path = config::config_path()?;
-    if !path.exists() {
-        return Err(ToolkitError::not_found(format!(
-            "Config not found: {}",
-            path.display()
-        )));
-    }
-
-    let contents = std::fs::read_to_string(&path)
-        .map_err(|e| ToolkitError::config(format!("Failed to read config: {}", e)))?;
-
-    let probe: serde_yaml::Value = serde_yaml::from_str(&contents)
-        .map_err(|e| ToolkitError::config(format!("Invalid YAML: {}", e)))?;
-
-    if !config::is_encrypted(&probe) {
-        return Err(ToolkitError::config(
-            "Config is not encrypted — nothing to migrate.",
-        ));
-    }
-
-    let key = key::get_private_key()?;
-    let public_key = key::public_key_from_private(&key)?;
-
-    // Decrypt in-place
-    let status = process::Command::new("sops")
-        .args(["--decrypt", "-i"])
-        .arg(&path)
-        .env("SOPS_AGE_KEY", key.expose_secret())
-        .env_remove("SOPS_AGE_KEY_FILE")
-        .status()
-        .map_err(|e| ToolkitError::crypto(format!("Failed to run sops: {}", e)))?;
-    if !status.success() {
-        process::exit(status.code().unwrap_or(1));
-    }
-
-    // Re-encrypt with the regex now in the (decrypted) config — picks up any
-    // edit the user made to `encrypted_regex` since the last encryption.
-    let encrypted_regex = config::load_encrypted_regex();
-    let status = process::Command::new("sops")
-        .args(["--encrypt", "--encrypted-regex", &encrypted_regex, "-i"])
-        .arg(&path)
-        .env("SOPS_AGE_RECIPIENTS", &public_key)
-        .status()
-        .map_err(|e| ToolkitError::crypto(format!("Failed to run sops: {}", e)))?;
-    if !status.success() {
-        process::exit(status.code().unwrap_or(1));
-    }
-
-    println!("Migrated: {}", path.display());
-    println!("Encrypted fields: {}", encrypted_regex);
-    Ok(())
-}
-
-fn cmd_config_show() -> Result<()> {
-    let path = config::config_path()?;
-    if !path.exists() {
-        return Err(ToolkitError::not_found(format!(
-            "Config not found: {}",
-            path.display()
-        )));
-    }
-
-    let contents = std::fs::read_to_string(&path)
-        .map_err(|e| ToolkitError::config(format!("Failed to read config: {}", e)))?;
-
-    let probe: serde_yaml::Value = serde_yaml::from_str(&contents)
-        .map_err(|e| ToolkitError::config(format!("Invalid YAML: {}", e)))?;
-
-    if config::is_encrypted(&probe) {
-        let decrypted = config::decrypt_config(&path)?;
-        print!("{}", decrypted);
-    } else {
-        print!("{}", contents);
-    }
-    Ok(())
-}
-
-fn cmd_daemon_status() -> Result<()> {
-    let socket_path = std::env::var("TOOLKIT_SOCKET")
-        .unwrap_or_else(|_| client::DEFAULT_SOCKET.to_owned());
-    let reachable = UnixStream::connect(&socket_path).is_ok();
-    println!(
-        "{}",
-        serde_json::json!({"socket": socket_path, "reachable": reachable})
-    );
-    Ok(())
-}
-
-fn cmd_daemon_config_edit() -> Result<()> {
     let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vi".to_string());
     let status = process::Command::new("sudo")
         .args(["-u", DAEMON_USER, &editor, DAEMON_CONFIG_PATH])
@@ -616,7 +247,7 @@ fn cmd_daemon_config_edit() -> Result<()> {
     Ok(())
 }
 
-fn cmd_daemon_config_show() -> Result<()> {
+fn cmd_config_show() -> Result<()> {
     let output = process::Command::new("sudo")
         .args(["-u", DAEMON_USER, "cat", DAEMON_CONFIG_PATH])
         .output()
@@ -636,6 +267,17 @@ fn cmd_daemon_config_show() -> Result<()> {
     let masked = serde_yaml::to_string(&value)
         .map_err(|e| ToolkitError::other(format!("failed to serialize config: {e}")))?;
     print!("{}", masked);
+    Ok(())
+}
+
+fn cmd_status() -> Result<()> {
+    let socket_path =
+        std::env::var("TOOLKIT_SOCKET").unwrap_or_else(|_| client::DEFAULT_SOCKET.to_owned());
+    let reachable = UnixStream::connect(&socket_path).is_ok();
+    println!(
+        "{}",
+        serde_json::json!({"socket": socket_path, "reachable": reachable})
+    );
     Ok(())
 }
 
@@ -716,7 +358,7 @@ msql:
         }
     };
 
-    println!("# Add to your config via `toolkit config edit`:");
+    println!("# Add to daemon config via `toolkit config edit`:");
     print!("{}", template);
     Ok(())
 }

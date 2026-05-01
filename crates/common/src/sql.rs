@@ -70,7 +70,12 @@ pub fn detect_write_target(sql: &str) -> Option<String> {
 pub fn assert_write_allowed(writable_tables: Option<&Vec<String>>, table: &str) -> Result<()> {
     let allowed = match writable_tables {
         Some(list) if !list.is_empty() => list,
-        _ => return Err(ToolkitError::write_denied(format!("write to '{}' denied", table))),
+        _ => {
+            return Err(ToolkitError::write_denied(format!(
+                "write to '{}' denied",
+                table
+            )))
+        }
     };
 
     let normalised = strip_schema(table).to_lowercase();

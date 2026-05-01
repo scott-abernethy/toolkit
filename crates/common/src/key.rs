@@ -66,8 +66,9 @@ pub fn write_key_file(key: &SecretString) -> Result<PathBuf> {
 
     if path.exists() {
         let backup = path.with_extension("txt.bak");
-        std::fs::copy(&path, &backup)
-            .map_err(|e| ToolkitError::crypto(format!("Failed to backup existing key file: {}", e)))?;
+        std::fs::copy(&path, &backup).map_err(|e| {
+            ToolkitError::crypto(format!("Failed to backup existing key file: {}", e))
+        })?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;

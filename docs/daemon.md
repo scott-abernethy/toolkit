@@ -4,6 +4,10 @@ The toolkit daemon (`toolkit-daemon`) is a long-running process that holds crede
 and dispatches tool requests over a UNIX socket. AI agents connect to the socket; the
 daemon reads the config file and calls the appropriate library on their behalf.
 
+All toolkit operations route through the daemon — native clients (`tkpsql`, `tkmsql`,
+`tkdbr`) send requests directly, and `toolkit guard` fetches config from the daemon
+before executing wrapped CLIs locally.
+
 ## Threat model
 
 | What the daemon protects against |
@@ -44,10 +48,10 @@ brew install <tap>/toolkit
 sudo $(brew --prefix)/opt/toolkit/libexec/setup-daemon.sh
 
 # 3. Add your connections to the daemon config
-toolkit daemon config edit
+toolkit config edit
 
 # 4. Verify the daemon is running
-toolkit daemon status
+toolkit status
 ```
 
 The setup script is idempotent — safe to re-run. After `brew upgrade toolkit`,
