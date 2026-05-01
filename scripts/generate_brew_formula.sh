@@ -99,11 +99,11 @@ class Toolkit < Formula
 
       Then add your connections:
 
-        toolkit daemon config edit
+        toolkit config edit
 
       Verify the daemon is running:
 
-        toolkit daemon status
+        toolkit status
 
       For Databricks OAuth login, run as _toolkit after daemon setup:
 
