@@ -46,18 +46,47 @@ fn rule_matches(rule: &str, args: &[&str]) -> bool {
         .all(|group| group.split('|').any(|alt| args.contains(&alt)))
 }
 
+/// Split `--flag=value` arguments into `["--flag", "value"]` so that rules
+/// written against the space-separated form (`--as admin`) also match the
+/// equals form (`--as=admin`). Without this, `deny: ["--as"]` is bypassable
+/// by writing `--as=admin`, since the literal token `--as` is absent.
+///
+/// Only flag-shaped tokens (starting with `-`) are split, so positional
+/// values containing `=` (e.g. `key=value` annotations) stay intact.
+fn normalize_args<'a>(args: &[&'a str]) -> Vec<&'a str> {
+    let mut out = Vec::with_capacity(args.len());
+    for arg in args {
+        if arg.starts_with('-') {
+            if let Some(eq_idx) = arg.find('=') {
+                out.push(&arg[..eq_idx]);
+                out.push(&arg[eq_idx + 1..]);
+                continue;
+            }
+        }
+        out.push(*arg);
+    }
+    out
+}
+
 /// Evaluate allow/deny rules against args.
 ///
 /// 1. Deny checked first — any match rejects
 /// 2. Allow checked second — at least one must match (unless allow is empty)
 pub fn check_rules(config: &ConnConfig, args: &[&str]) -> Result<()> {
+    let normalized = normalize_args(args);
+
     for rule in &config.deny {
-        if rule_matches(rule, args) {
+        if rule_matches(rule, &normalized) {
             return Err(ToolkitError::permission("command denied"));
         }
     }
 
-    if !config.allow.is_empty() && !config.allow.iter().any(|rule| rule_matches(rule, args)) {
+    if !config.allow.is_empty()
+        && !config
+            .allow
+            .iter()
+            .any(|rule| rule_matches(rule, &normalized))
+    {
         return Err(ToolkitError::permission("command denied"));
     }
     Ok(())
@@ -196,6 +225,54 @@ mod tests {
             Err(ToolkitError::Permission(_)) => {}
             other => panic!("expected Permission, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn test_check_rules_denies_equals_form_flag() {
+        // Without arg normalisation, `--as=admin` would slip past a `--as`
+        // deny rule because the literal token `--as` never appears.
+        let config = ConnConfig {
+            command: "test".into(),
+            env: HashMap::new(),
+            allow: vec![],
+            deny: vec!["--as".into()],
+        };
+        match check_rules(&config, &["get", "pods", "--as=admin"]) {
+            Err(ToolkitError::Permission(_)) => {}
+            other => panic!("expected Permission, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_check_rules_denies_value_token_in_equals_form() {
+        // The value half of `--token=eyJ...` should also be matchable so a
+        // deny rule keyed on the secret value still triggers.
+        let config = ConnConfig {
+            command: "test".into(),
+            env: HashMap::new(),
+            allow: vec![],
+            deny: vec!["eyJsensitive".into()],
+        };
+        match check_rules(&config, &["get", "pods", "--token=eyJsensitive"]) {
+            Err(ToolkitError::Permission(_)) => {}
+            other => panic!("expected Permission, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_check_rules_positional_with_equals_not_split() {
+        // Positional `key=value` tokens (e.g. annotations) must stay intact:
+        // splitting them would destroy the value half and could cause spurious
+        // matches against rules that key on the literal value.
+        let config = ConnConfig {
+            command: "test".into(),
+            env: HashMap::new(),
+            allow: vec![],
+            deny: vec!["key".into()],
+        };
+        // The annotation arg has `key=value` but the literal token is the
+        // whole string, so a `key` deny rule must NOT match.
+        assert!(check_rules(&config, &["annotate", "pod", "key=value"]).is_ok());
     }
 
     #[test]

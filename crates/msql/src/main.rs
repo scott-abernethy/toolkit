@@ -51,12 +51,7 @@ async fn run() -> Result<()> {
         Commands::Tables { schema } => ("tables", json!({"schema": schema})),
         Commands::Describe { table } => ("describe", json!({"table": table})),
     };
-    let req = Request {
-        tool: "msql".to_owned(),
-        conn: cli.conn,
-        op: op.to_owned(),
-        params,
-    };
+    let req = Request::new("msql", cli.conn, op, params);
     let result = common::client::send(&req)?;
     print_json(&result);
     Ok(())

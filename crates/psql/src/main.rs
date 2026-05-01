@@ -51,12 +51,7 @@ fn run() -> Result<()> {
         Commands::Tables { schema } => ("tables", json!({"schema": schema})),
         Commands::Describe { table } => ("describe", json!({"table": table})),
     };
-    let req = Request {
-        tool: "psql".to_owned(),
-        conn: cli.conn,
-        op: op.to_owned(),
-        params,
-    };
+    let req = Request::new("psql", cli.conn, op, params);
     let result = common::client::send(&req)?;
     print_json(&result);
     Ok(())

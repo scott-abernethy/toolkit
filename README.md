@@ -12,18 +12,36 @@ AI coding agents (Claude Code, GitHub Copilot CLI, opencode, etc.) are increasin
 
 ## Threat Model
 
-`toolkit-daemon` runs as a dedicated `_toolkit` system user that owns the config file. The agent UID has no read access. CLI tools (`tkpsql` et al.) connect over a UNIX socket with peer-UID enforcement. Combined with sandboxing the agent itself (sandbox-exec, bwrap, container), this defeats a hostile agent on a single box.
+Toolkit addresses two distinct surfaces:
 
-Defence is layered: toolkit's own checks sit on top of (a) harness denylists like `Bash(toolkit:*)`, (b) per-tool agent hooks that block access to credential stores, and (c) DB-side GRANTs / read-only roles. Treat toolkit's own checks as defence-in-depth on top of those, not as the only line.
+**Leak surface — what the agent can see.** Credentials live in `/var/lib/toolkit/.config/toolkit/config.yaml` (mode 0600, owned by `_toolkit`). The agent UID can't read the file or list the directory, and tools never put credentials in argv, env, or output that the agent reads. CLIs that wrap external tools (Databricks, kubectl) inject credentials at exec time so the agent's home directory doesn't accumulate plaintext config.
+
+**Action surface — what the agent can do.** `toolkit-daemon` listens on a UNIX socket; the agent UID connects from the other side. Peer-UID enforcement (`getpeereid` / `SO_PEERCRED`) gates the connection, and every request runs through a typed dispatch handler — there is no path that takes raw SQL or shell input from the agent and runs it without going through a tool-specific check (write-target allowlist for SQL, allow/deny rule engine for guard).
+
+**What toolkit does NOT enforce:**
+
+- **Per-UID or per-connection authorisation.** `daemon.allowed_uids` is binary: every listed UID can use every connection in the config. If `config.yaml` holds both a `dev` and a `prod` Postgres connection and the developer UID is allowed, the agent can reach prod. To segregate, run a second daemon under a different `socket_path` and config, or split connections across hosts.
+- **Network egress.** Once a UID can reach the daemon and the daemon can reach the upstream service, traffic flows. If you need a network boundary, use OS-level controls (firewalls, network namespaces, VPC ACLs).
+- **Inference from query results.** Toolkit can stop a write but not the slow reconstruction of schema from `SELECT` output. Read-only is not no-information.
+
+**Defence in layers** (strongest first):
+
+1. **Service-side privileges.** Read-only DB roles, IAM scopes, GRANTs. Enforced where it matters; the only layer that survives a compromise of everything above it.
+2. **Toolkit checks.** Session-level read-only on Postgres, write-table allowlists, peer-UID at the socket, allow/deny rules for guarded CLIs. Catch mistakes and contain a misbehaving tool before it reaches the service.
+3. **Harness hooks.** Claude Code / opencode deny rules that block reads of `~/.aws`, `.env`, and direct `toolkit` management commands. Stop a request before it's ever made.
+4. **Agent sandbox.** sandbox-exec, bwrap, container. Bounds what the agent can do outside toolkit's surface.
+
+Toolkit is meaningful as one layer in that stack — not as a substitute for any of the others.
 
 ## What Toolkit Does
 
 Toolkit is a safety kit that sits between AI agents and upstream services. Each tool in the kit:
 
-1. **Enforces a default-deny posture for writes** — Postgres connections are session-level read-only at the server (the strongest control here, enforced by Postgres itself); MS SQL relies on `db_datareader` role. An optional `writable_tables` allowlist enables specific writes; client-side write detection is a sanity check on top of DB-side privileges, not a substitute for them.
-2. **Reduces credential leak surface** — credentials live in a single config file owned by the `_toolkit` daemon user (mode 0600) and are injected into wrapped CLIs as env vars at exec time. Agents never see credentials in argv, in their config files, or in tool output.
-3. **Produces token-efficient output** — compact JSON with no decoration, no verbose metadata envelopes, and sensible default limits. Designed for direct consumption by LLMs.
-4. **Fails safely** — errors are returned as structured JSON (not stack traces), with credentials scrubbed from error messages.
+1. **Defers write authorisation to the database** — Postgres connections start with `default_transaction_read_only=on` at the server, so writes fail at the engine even if a query slips past the client. MS SQL relies on the SQL login's role (`db_datareader` for read-only); toolkit can't enforce this from the client, so configure your DB user accordingly.
+2. **Treats client-side write detection as defence-in-depth** — when a `writable_tables` allowlist is configured, toolkit parses each statement and rejects writes to tables outside the list before sending anything to the database. This is a sanity check on top of the DB-side controls in (1), not a substitute for them.
+3. **Reduces credential leak surface** — credentials live in a single config file owned by the `_toolkit` daemon user (mode 0600) and are injected into wrapped CLIs as env vars at exec time. Agents never see credentials in argv, in their config files, or in tool output.
+4. **Produces token-efficient output** — compact JSON with no decoration, no verbose metadata envelopes, and sensible default limits. Designed for direct consumption by LLMs.
+5. **Fails safely** — errors are returned as structured JSON (not stack traces), with credentials scrubbed from error messages.
 
 ## Installation
 
@@ -97,7 +115,7 @@ kubectl:
 
 ```sh
 toolkit install
-# Generates ~/.config/toolkit/bin/tkkubectl-dev
+# Generates $HOME/.local/bin/tkkubectl-dev (override with install_path in config)
 
 # Agent just runs:
 tkkubectl-dev get pods -o json

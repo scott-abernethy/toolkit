@@ -2,9 +2,17 @@ use common::{Result, ToolkitError};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::HashMap;
-use std::process::Command;
+use std::io::Read;
+use std::process::{Command, Output, Stdio};
 use std::thread;
 use std::time::Duration;
+use wait_timeout::ChildExt;
+
+/// Maximum time to wait for a `databricks` subprocess. Beyond this we kill
+/// the child so a stuck CLI can't pin the daemon's blocking thread pool.
+/// Bundle deploys and large query polls can be slow, so the default is
+/// generous; tune via the lib if a particular call needs longer.
+const CLI_TIMEOUT: Duration = Duration::from_secs(120);
 
 // ---------------------------------------------------------------------------
 // Config
@@ -154,28 +162,81 @@ fn build_cmd(config: &ConnConfig) -> Result<Command> {
     Ok(cmd)
 }
 
+/// Spawn a subprocess with piped output, enforce `CLI_TIMEOUT`, and return
+/// its `Output`. Reader threads drain stdout/stderr concurrently so a child
+/// that produces more than the pipe buffer (~64 KiB) can't deadlock on write.
+/// On timeout the child is killed and reaped before we return.
+fn spawn_with_timeout(mut cmd: Command, ctx: &str) -> Result<Output> {
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| ToolkitError::cli(format!("Failed to run databricks CLI: {}", e)))?;
+
+    let mut stdout_pipe = child.stdout.take().unwrap();
+    let mut stderr_pipe = child.stderr.take().unwrap();
+    let stdout_thread = thread::spawn(move || {
+        let mut buf = Vec::new();
+        let _ = stdout_pipe.read_to_end(&mut buf);
+        buf
+    });
+    let stderr_thread = thread::spawn(move || {
+        let mut buf = Vec::new();
+        let _ = stderr_pipe.read_to_end(&mut buf);
+        buf
+    });
+
+    let status = match child
+        .wait_timeout(CLI_TIMEOUT)
+        .map_err(|e| ToolkitError::cli(format!("wait error: {}", e)))?
+    {
+        Some(s) => s,
+        None => {
+            let _ = child.kill();
+            let _ = child.wait();
+            common::errorlog::append(
+                &format!("dbr/{}", ctx),
+                &format!("CLI timed out after {}s", CLI_TIMEOUT.as_secs()),
+            );
+            return Err(ToolkitError::cli(format!(
+                "databricks CLI timed out after {}s",
+                CLI_TIMEOUT.as_secs()
+            )));
+        }
+    };
+
+    let stdout = stdout_thread.join().unwrap_or_default();
+    let stderr = stderr_thread.join().unwrap_or_default();
+    Ok(Output {
+        status,
+        stdout,
+        stderr,
+    })
+}
+
+/// Build the failure message for a non-zero exit, preferring stderr.
+fn failure_msg(output: &Output) -> String {
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    if !stderr.trim().is_empty() {
+        stderr.trim().to_string()
+    } else {
+        stdout.trim().to_string()
+    }
+}
+
 /// Run a `databricks` subcommand and return parsed JSON output.
 /// Global flags (--output) are prepended; subcommand args follow.
 fn run_databricks(config: &ConnConfig, args: &[&str]) -> Result<Value> {
     let mut cmd = build_cmd(config)?;
-
     cmd.arg("--output").arg("json");
     cmd.args(args);
 
-    let output = cmd
-        .output()
-        .map_err(|e| ToolkitError::cli(format!("Failed to run databricks CLI: {}", e)))?;
+    let ctx = format!("{} {:?}", config.conn_name, args);
+    let output = spawn_with_timeout(cmd, &ctx)?;
 
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        // Prefer stderr for error message; fall back to stdout
-        let raw_msg = if !stderr.trim().is_empty() {
-            stderr.trim().to_string()
-        } else {
-            stdout.trim().to_string()
-        };
-        common::errorlog::append(&format!("dbr/{} {:?}", config.conn_name, args), &raw_msg);
+        let raw_msg = failure_msg(&output);
+        common::errorlog::append(&format!("dbr/{}", ctx), &raw_msg);
         return Err(sanitize_cli_error(&raw_msg));
     }
 
@@ -187,23 +248,14 @@ fn run_databricks(config: &ConnConfig, args: &[&str]) -> Result<Value> {
 /// Returns (stdout, stderr) if successful.
 fn run_databricks_no_json(config: &ConnConfig, args: &[&str]) -> Result<(String, String)> {
     let mut cmd = build_cmd(config)?;
-
     cmd.args(args);
 
-    let output = cmd
-        .output()
-        .map_err(|e| ToolkitError::cli(format!("Failed to run databricks CLI: {}", e)))?;
+    let ctx = format!("{} {:?}", config.conn_name, args);
+    let output = spawn_with_timeout(cmd, &ctx)?;
 
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        // Prefer stderr for error message; fall back to stdout
-        let raw_msg = if !stderr.trim().is_empty() {
-            stderr.trim().to_string()
-        } else {
-            stdout.trim().to_string()
-        };
-        common::errorlog::append(&format!("dbr/{} {:?}", config.conn_name, args), &raw_msg);
+        let raw_msg = failure_msg(&output);
+        common::errorlog::append(&format!("dbr/{}", ctx), &raw_msg);
         return Err(sanitize_cli_error(&raw_msg));
     }
 
@@ -217,25 +269,14 @@ fn run_databricks_no_json(config: &ConnConfig, args: &[&str]) -> Result<(String,
 fn run_databricks_api_post(config: &ConnConfig, path: &str, body: &Value) -> Result<Value> {
     let body_str = serde_json::to_string(body).unwrap();
     let mut cmd = build_cmd(config)?;
-
     cmd.args(["api", "post", path, "--json", &body_str]);
 
-    let output = cmd
-        .output()
-        .map_err(|e| ToolkitError::cli(format!("Failed to run databricks CLI: {}", e)))?;
+    let ctx = format!("{} api post {}", config.conn_name, path);
+    let output = spawn_with_timeout(cmd, &ctx)?;
 
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let raw_msg = if !stderr.trim().is_empty() {
-            stderr.trim().to_string()
-        } else {
-            stdout.trim().to_string()
-        };
-        common::errorlog::append(
-            &format!("dbr/{} api post {}", config.conn_name, path),
-            &raw_msg,
-        );
+        let raw_msg = failure_msg(&output);
+        common::errorlog::append(&format!("dbr/{}", ctx), &raw_msg);
         return Err(sanitize_cli_error(&raw_msg));
     }
 
@@ -246,12 +287,10 @@ fn run_databricks_api_post(config: &ConnConfig, path: &str, body: &Value) -> Res
 /// Run `databricks api get <path>` and return parsed JSON output.
 fn run_databricks_api_get(config: &ConnConfig, path: &str) -> Result<Value> {
     let mut cmd = build_cmd(config)?;
-
     cmd.args(["api", "get", path]);
 
-    let output = cmd
-        .output()
-        .map_err(|e| ToolkitError::cli(format!("Failed to run databricks CLI: {}", e)))?;
+    let ctx = format!("{} api get {}", config.conn_name, path);
+    let output = spawn_with_timeout(cmd, &ctx)?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -730,158 +769,6 @@ pub fn tables_get(config: &ConnConfig, catalog: &str, schema: &str, table: &str)
 }
 
 // ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_sanitize_auth_error() {
-        match sanitize_cli_error("Error: 401 Unauthorized") {
-            ToolkitError::Auth(m) => assert_eq!(m, "authentication error: check your token"),
-            other => panic!("expected Auth, got {:?}", other),
-        }
-    }
-
-    #[test]
-    fn test_sanitize_not_found() {
-        match sanitize_cli_error("Error: resource does not exist") {
-            ToolkitError::NotFound(m) => assert_eq!(m, "resource not found"),
-            other => panic!("expected NotFound, got {:?}", other),
-        }
-    }
-
-    #[test]
-    fn test_sanitize_permission() {
-        match sanitize_cli_error("Error: 403 Forbidden") {
-            ToolkitError::Permission(m) => assert_eq!(m, "permission denied"),
-            other => panic!("expected Permission, got {:?}", other),
-        }
-    }
-
-    #[test]
-    fn test_sanitize_first_line_only() {
-        let msg = "Error: something went wrong\n  at line 1\n  at line 2\n  at line 3";
-        match sanitize_cli_error(msg) {
-            ToolkitError::Cli(m) => assert_eq!(m, "Error: something went wrong"),
-            other => panic!("expected Cli, got {:?}", other),
-        }
-    }
-
-    #[test]
-    fn test_task_type_notebook() {
-        let task = json!({"task_key": "t1", "notebook_task": {"notebook_path": "/foo"}});
-        assert_eq!(task_type(&task), "notebook");
-    }
-
-    #[test]
-    fn test_task_type_unknown() {
-        let task = json!({"task_key": "t1"});
-        assert_eq!(task_type(&task), "unknown");
-    }
-
-    #[test]
-    fn test_compact_run_terminated() {
-        let run = json!({
-            "run_id": 123,
-            "job_id": 456,
-            "state": {
-                "life_cycle_state": "TERMINATED",
-                "result_state": "SUCCESS",
-                "state_message": ""
-            },
-            "start_time": 1700000000000_i64,
-            "end_time": 1700000060000_i64,
-        });
-        let compact = compact_run(&run);
-        assert_eq!(compact["run_id"], 123);
-        assert_eq!(compact["state"], "TERMINATED");
-        assert_eq!(compact["result"], "SUCCESS");
-        assert!(compact["message"].is_null()); // empty message filtered
-    }
-
-    #[test]
-    fn test_compact_run_running_no_result() {
-        let run = json!({
-            "run_id": 99,
-            "job_id": 1,
-            "state": {
-                "life_cycle_state": "RUNNING",
-                "state_message": "In progress"
-            },
-        });
-        let compact = compact_run(&run);
-        assert_eq!(compact["state"], "RUNNING");
-        assert_eq!(compact["message"], "In progress");
-    }
-
-    #[test]
-    fn test_compact_cluster() {
-        let c = json!({
-            "cluster_id": "abc-123",
-            "cluster_name": "My Cluster",
-            "state": "RUNNING",
-            "spark_version": "14.3.x-scala2.12",
-            "node_type_id": "i3.xlarge",
-            "num_workers": 4,
-            "driver": {"node_id": "xxx"},       // should be dropped
-            "aws_attributes": {"availability": "ON_DEMAND"}, // should be dropped
-        });
-        let compact = compact_cluster(&c);
-        assert_eq!(compact["id"], "abc-123");
-        assert_eq!(compact["state"], "RUNNING");
-        assert!(compact.get("driver").is_none());
-        assert!(compact.get("aws_attributes").is_none());
-    }
-
-    #[test]
-    fn test_has_limit_clause() {
-        assert!(has_limit_clause("SELECT * FROM t LIMIT 10"));
-        assert!(has_limit_clause("select * from t limit 10"));
-        assert!(has_limit_clause("SELECT * FROM t WHERE x > 1 LIMIT 50"));
-        assert!(!has_limit_clause("SELECT * FROM t"));
-        assert!(!has_limit_clause("SELECT limited FROM t"));
-    }
-
-    #[test]
-    fn test_print_query_result_success() {
-        let raw = json!({
-            "status": {"state": "SUCCEEDED"},
-            "manifest": {
-                "schema": {
-                    "columns": [
-                        {"name": "id", "type_text": "INT"},
-                        {"name": "name", "type_text": "STRING"},
-                    ]
-                },
-                "total_row_count": 2,
-            },
-            "result": {
-                "data_array": [
-                    ["1", "alice"],
-                    ["2", "bob"],
-                ],
-            },
-        });
-
-        // Extract columns like print_query_result does
-        let columns: Vec<&str> = raw["manifest"]["schema"]["columns"]
-            .as_array()
-            .map(|cols| cols.iter().filter_map(|c| c["name"].as_str()).collect())
-            .unwrap_or_default();
-
-        assert_eq!(columns, vec!["id", "name"]);
-
-        let rows = raw["result"]["data_array"].as_array().unwrap();
-        assert_eq!(rows.len(), 2);
-        assert_eq!(rows[0][0], "1");
-        assert_eq!(rows[0][1], "alice");
-    }
-}
-
-// ---------------------------------------------------------------------------
 // Query
 // ---------------------------------------------------------------------------
 
@@ -927,11 +814,11 @@ pub fn query(
 }
 
 /// Check if SQL already contains a LIMIT clause (simple heuristic).
+/// Whitespace-tolerant: matches `LIMIT` separated from neighbouring tokens
+/// by any whitespace, including tabs and newlines.
 fn has_limit_clause(sql: &str) -> bool {
-    // Look for LIMIT as a standalone word (case-insensitive), not inside quotes
-    let upper = sql.to_uppercase();
-    // Simple check: find LIMIT followed by whitespace and a number
-    upper.contains(" LIMIT ") || upper.ends_with(" LIMIT")
+    sql.split_whitespace()
+        .any(|tok| tok.eq_ignore_ascii_case("LIMIT"))
 }
 
 /// Poll a statement until it reaches a terminal state.
@@ -1061,5 +948,159 @@ pub fn bundle_run(config: &ConnConfig, name: &str, only: Option<&str>) -> Result
         Ok(json!({"ok": true, "run_id": id}))
     } else {
         Ok(json!({"ok": true}))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_sanitize_auth_error() {
+        match sanitize_cli_error("Error: 401 Unauthorized") {
+            ToolkitError::Auth(m) => assert_eq!(m, "authentication error: check your token"),
+            other => panic!("expected Auth, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_sanitize_not_found() {
+        match sanitize_cli_error("Error: resource does not exist") {
+            ToolkitError::NotFound(m) => assert_eq!(m, "resource not found"),
+            other => panic!("expected NotFound, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_sanitize_permission() {
+        match sanitize_cli_error("Error: 403 Forbidden") {
+            ToolkitError::Permission(m) => assert_eq!(m, "permission denied"),
+            other => panic!("expected Permission, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_sanitize_first_line_only() {
+        let msg = "Error: something went wrong\n  at line 1\n  at line 2\n  at line 3";
+        match sanitize_cli_error(msg) {
+            ToolkitError::Cli(m) => assert_eq!(m, "Error: something went wrong"),
+            other => panic!("expected Cli, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_task_type_notebook() {
+        let task = json!({"task_key": "t1", "notebook_task": {"notebook_path": "/foo"}});
+        assert_eq!(task_type(&task), "notebook");
+    }
+
+    #[test]
+    fn test_task_type_unknown() {
+        let task = json!({"task_key": "t1"});
+        assert_eq!(task_type(&task), "unknown");
+    }
+
+    #[test]
+    fn test_compact_run_terminated() {
+        let run = json!({
+            "run_id": 123,
+            "job_id": 456,
+            "state": {
+                "life_cycle_state": "TERMINATED",
+                "result_state": "SUCCESS",
+                "state_message": ""
+            },
+            "start_time": 1700000000000_i64,
+            "end_time": 1700000060000_i64,
+        });
+        let compact = compact_run(&run);
+        assert_eq!(compact["run_id"], 123);
+        assert_eq!(compact["state"], "TERMINATED");
+        assert_eq!(compact["result"], "SUCCESS");
+        assert!(compact["message"].is_null());
+    }
+
+    #[test]
+    fn test_compact_run_running_no_result() {
+        let run = json!({
+            "run_id": 99,
+            "job_id": 1,
+            "state": {
+                "life_cycle_state": "RUNNING",
+                "state_message": "In progress"
+            },
+        });
+        let compact = compact_run(&run);
+        assert_eq!(compact["state"], "RUNNING");
+        assert_eq!(compact["message"], "In progress");
+    }
+
+    #[test]
+    fn test_compact_cluster() {
+        let c = json!({
+            "cluster_id": "abc-123",
+            "cluster_name": "My Cluster",
+            "state": "RUNNING",
+            "spark_version": "14.3.x-scala2.12",
+            "node_type_id": "i3.xlarge",
+            "num_workers": 4,
+            "driver": {"node_id": "xxx"},
+            "aws_attributes": {"availability": "ON_DEMAND"},
+        });
+        let compact = compact_cluster(&c);
+        assert_eq!(compact["id"], "abc-123");
+        assert_eq!(compact["state"], "RUNNING");
+        assert!(compact.get("driver").is_none());
+        assert!(compact.get("aws_attributes").is_none());
+    }
+
+    #[test]
+    fn test_has_limit_clause() {
+        assert!(has_limit_clause("SELECT * FROM t LIMIT 10"));
+        assert!(has_limit_clause("select * from t limit 10"));
+        assert!(has_limit_clause("SELECT * FROM t WHERE x > 1 LIMIT 50"));
+        assert!(!has_limit_clause("SELECT * FROM t"));
+        assert!(!has_limit_clause("SELECT limited FROM t"));
+        assert!(has_limit_clause("SELECT * FROM t\nLIMIT\n10"));
+        assert!(has_limit_clause("SELECT * FROM t\tLIMIT\t10"));
+        assert!(has_limit_clause("SELECT * FROM t   LIMIT   10"));
+    }
+
+    #[test]
+    fn test_print_query_result_success() {
+        let raw = json!({
+            "status": {"state": "SUCCEEDED"},
+            "manifest": {
+                "schema": {
+                    "columns": [
+                        {"name": "id", "type_text": "INT"},
+                        {"name": "name", "type_text": "STRING"},
+                    ]
+                },
+                "total_row_count": 2,
+            },
+            "result": {
+                "data_array": [
+                    ["1", "alice"],
+                    ["2", "bob"],
+                ],
+            },
+        });
+
+        let columns: Vec<&str> = raw["manifest"]["schema"]["columns"]
+            .as_array()
+            .map(|cols| cols.iter().filter_map(|c| c["name"].as_str()).collect())
+            .unwrap_or_default();
+
+        assert_eq!(columns, vec!["id", "name"]);
+
+        let rows = raw["result"]["data_array"].as_array().unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0][0], "1");
+        assert_eq!(rows[0][1], "alice");
     }
 }

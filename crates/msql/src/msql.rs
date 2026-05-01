@@ -268,7 +268,12 @@ async fn exec_query(
 // ---------------------------------------------------------------------------
 
 pub async fn run_query(config: &ConnConfig, sql: &str) -> Result<QueryResponse> {
-    if let Some(table) = sql::detect_write_target(sql) {
+    // Authorise every write target individually. Multi-statement input like
+    // `INSERT INTO allowed; DELETE FROM forbidden` only passes if every
+    // target is on the allowlist. Read-only enforcement on MSSQL relies on
+    // the SQL login's role (db_datareader); the allowlist is client-side
+    // defence-in-depth.
+    for table in sql::detect_write_targets(sql) {
         sql::assert_write_allowed(config.writable_tables.as_ref(), &table)?;
     }
     let rows = exec_query(config, sql, &[]).await?;

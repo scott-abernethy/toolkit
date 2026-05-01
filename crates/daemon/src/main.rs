@@ -1,3 +1,4 @@
+mod audit;
 mod dispatch;
 
 use std::os::unix::fs::PermissionsExt;
@@ -18,6 +19,9 @@ struct DaemonConfig {
     socket_path: Option<String>,
     /// UIDs allowed to connect. If absent or empty, all local users may connect.
     allowed_uids: Option<Vec<u32>>,
+    /// Path to a JSONL audit log. Each line records one request with ts, uid,
+    /// tool, conn, op, ok, error_class, and duration_ms. Omit to disable.
+    audit_log: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -69,21 +73,29 @@ fn peer_uid(_fd: std::os::unix::io::RawFd) -> Option<u32> {
 // Connection handler
 // ---------------------------------------------------------------------------
 
-async fn handle_connection(mut stream: tokio::net::UnixStream, allowed_uids: Option<Vec<u32>>) {
-    // Peer UID check — fail closed if UID unavailable or not in allowlist.
+async fn handle_connection(
+    mut stream: tokio::net::UnixStream,
+    allowed_uids: Option<Vec<u32>>,
+    audit_log: Option<String>,
+) {
+    let start = std::time::Instant::now();
     let fd = stream.as_raw_fd();
-    match peer_uid(fd) {
-        Some(uid) => {
-            if let Some(ref list) = allowed_uids {
-                if !list.is_empty() && !list.contains(&uid) {
-                    let resp = Response::err(format!("UID {uid} not permitted"));
-                    let _ = write_response(&mut stream, &resp).await;
-                    return;
-                }
-            }
-        }
+
+    // Peer UID check — fail closed if UID unavailable or not in allowlist.
+    let uid = match peer_uid(fd) {
+        Some(u) => u,
         None => {
-            let resp = Response::err("could not determine peer UID");
+            let resp = Response::err_class("could not determine peer UID", "forbidden");
+            audit::write(audit_log.as_deref(), None, None, None, None, &resp, start.elapsed());
+            let _ = write_response(&mut stream, &resp).await;
+            return;
+        }
+    };
+
+    if let Some(ref list) = allowed_uids {
+        if !list.is_empty() && !list.contains(&uid) {
+            let resp = Response::err_class(format!("UID {uid} not permitted"), "forbidden");
+            audit::write(audit_log.as_deref(), Some(uid), None, None, None, &resp, start.elapsed());
             let _ = write_response(&mut stream, &resp).await;
             return;
         }
@@ -94,9 +106,10 @@ async fn handle_connection(mut stream: tokio::net::UnixStream, allowed_uids: Opt
     let mut line = String::new();
 
     match reader.read_line(&mut line).await {
-        Ok(0) => return, // EOF
+        Ok(0) => return, // EOF — no audit entry for empty connections
         Ok(n) if n > 1 << 20 => {
-            let resp = Response::err("request too large (> 1 MiB)");
+            let resp = Response::err_class("request too large (> 1 MiB)", "invalid_request");
+            audit::write(audit_log.as_deref(), Some(uid), None, None, None, &resp, start.elapsed());
             let _ = write_response_half(&mut writer_half, &resp).await;
             return;
         }
@@ -107,11 +120,31 @@ async fn handle_connection(mut stream: tokio::net::UnixStream, allowed_uids: Opt
         }
     }
 
-    let resp = match serde_json::from_str::<Request>(line.trim()) {
-        Ok(req) => dispatch::dispatch(req).await,
-        Err(e) => Response::err(format!("invalid request: {e}")),
+    let (tool, conn, op, resp) = match serde_json::from_str::<Request>(line.trim()) {
+        Ok(req) => {
+            let tool = req.tool.clone();
+            let conn = req.conn.clone();
+            let op = req.op.clone();
+            let resp = dispatch::dispatch(req).await;
+            (Some(tool), conn, Some(op), resp)
+        }
+        Err(e) => (
+            None,
+            None,
+            None,
+            Response::err_class(format!("invalid request: {e}"), "invalid_request"),
+        ),
     };
 
+    audit::write(
+        audit_log.as_deref(),
+        Some(uid),
+        tool.as_deref(),
+        conn.as_deref(),
+        op.as_deref(),
+        &resp,
+        start.elapsed(),
+    );
     let _ = write_response_half(&mut writer_half, &resp).await;
 }
 
@@ -180,13 +213,15 @@ async fn main() {
     eprintln!("toolkit-daemon: listening on {socket_path}");
 
     let allowed_uids = daemon_config.allowed_uids;
+    let audit_log = daemon_config.audit_log;
 
     loop {
         match listener.accept().await {
             Ok((stream, _)) => {
                 let uids = allowed_uids.clone();
+                let log = audit_log.clone();
                 tokio::spawn(async move {
-                    handle_connection(stream, uids).await;
+                    handle_connection(stream, uids, log).await;
                 });
             }
             Err(e) => {

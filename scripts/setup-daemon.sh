@@ -101,7 +101,7 @@ if [[ ! -f "${CONFIG_FILE}" ]]; then
     echo "Writing template config to ${CONFIG_FILE}..."
     sudo -u "${TOOLKIT_USER}" tee "${CONFIG_FILE}" > /dev/null <<'CONF'
 # toolkit daemon config — owned by _toolkit, not readable by agent UIDs.
-# Edit with: toolkit daemon config edit
+# Edit with: toolkit config edit
 #
 # Example PostgreSQL connection:
 # psql:
@@ -191,10 +191,10 @@ echo ""
 echo "✓ Daemon setup complete."
 echo ""
 echo "Next: add your connections to the daemon config:"
-echo "  toolkit daemon config edit"
+echo "  toolkit config edit"
 echo ""
 echo "Verify the daemon is running:"
-echo "  toolkit daemon status"
+echo "  toolkit status"
 echo ""
 echo "After 'brew upgrade toolkit', re-run this script to update the daemon binary:"
 echo "  sudo $0"

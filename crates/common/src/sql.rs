@@ -44,25 +44,51 @@ const WRITE_KEYWORDS: &[&str] = &[
     "EXECUTE ",
 ];
 
-/// If `sql` is a write or DDL statement, returns the bare target table/object name.
-/// Returns `None` for read-only statements.
-pub fn detect_write_target(sql: &str) -> Option<String> {
-    let upper = sql.to_uppercase();
+/// Returns the bare target name (lowercased, schema stripped) for every
+/// write or DDL statement detected in `sql`. Empty for read-only input.
+///
+/// Multi-statement input is walked in full so that
+/// `"INSERT INTO allowed; DELETE FROM forbidden"` yields both targets.
+pub fn detect_write_targets(sql: &str) -> Vec<String> {
+    // ASCII-only uppercasing preserves byte positions: a position found in
+    // `upper` is a valid char-boundary index into the original `sql`. Using
+    // full Unicode `to_uppercase()` would change byte length for non-ASCII
+    // identifiers and could panic when slicing back into `sql`.
+    let mut upper = sql.to_string();
+    upper.make_ascii_uppercase();
+    let upper_bytes = upper.as_bytes();
 
-    for keyword in WRITE_KEYWORDS {
-        if let Some(pos) = upper.find(keyword) {
-            let after = sql[pos + keyword.len()..].trim_start();
-            let name: String = after
-                .chars()
-                .take_while(|c| !c.is_whitespace() && *c != ';' && *c != '(')
-                .collect();
-            if !name.is_empty() {
-                return Some(strip_schema(&name).to_lowercase());
+    // Longest-prefix-wins scan so `"TRUNCATE TABLE foo"` matches only the
+    // longer keyword and yields `"foo"`, not `"foo"` plus `"table"`.
+    let mut keywords: Vec<&&str> = WRITE_KEYWORDS.iter().collect();
+    keywords.sort_by_key(|k| std::cmp::Reverse(k.len()));
+
+    let mut targets = Vec::new();
+    let mut i = 0;
+    while i < upper_bytes.len() {
+        let mut advanced = false;
+        for keyword in &keywords {
+            let kw_bytes = keyword.as_bytes();
+            if upper_bytes[i..].starts_with(kw_bytes) {
+                let after_idx = i + kw_bytes.len();
+                let after = sql[after_idx..].trim_start();
+                let name: String = after
+                    .chars()
+                    .take_while(|c| !c.is_whitespace() && *c != ';' && *c != '(')
+                    .collect();
+                if !name.is_empty() {
+                    targets.push(strip_schema(&name).to_lowercase());
+                }
+                i = after_idx;
+                advanced = true;
+                break;
             }
         }
+        if !advanced {
+            i += 1;
+        }
     }
-
-    None
+    targets
 }
 
 /// Checks whether a write to `table` is permitted by the given allowlist.
@@ -116,90 +142,115 @@ impl QueryResponse {
 mod tests {
     use super::*;
 
-    // -- detect_write_target --
+    // -- detect_write_targets --
 
     #[test]
     fn test_detect_write_insert() {
         assert_eq!(
-            detect_write_target("INSERT INTO public.orders VALUES (1)"),
-            Some("orders".to_string())
+            detect_write_targets("INSERT INTO public.orders VALUES (1)"),
+            vec!["orders".to_string()]
         );
     }
 
     #[test]
     fn test_detect_write_insert_unqualified() {
         assert_eq!(
-            detect_write_target("insert into orders (id) values (1)"),
-            Some("orders".to_string())
+            detect_write_targets("insert into orders (id) values (1)"),
+            vec!["orders".to_string()]
         );
     }
 
     #[test]
     fn test_detect_write_update() {
         assert_eq!(
-            detect_write_target("UPDATE public.orders SET status = 'done' WHERE id = 1"),
-            Some("orders".to_string())
+            detect_write_targets("UPDATE public.orders SET status = 'done' WHERE id = 1"),
+            vec!["orders".to_string()]
         );
     }
 
     #[test]
     fn test_detect_write_delete() {
         assert_eq!(
-            detect_write_target("DELETE FROM orders WHERE id = 1"),
-            Some("orders".to_string())
+            detect_write_targets("DELETE FROM orders WHERE id = 1"),
+            vec!["orders".to_string()]
         );
     }
 
     #[test]
     fn test_detect_write_truncate() {
         assert_eq!(
-            detect_write_target("TRUNCATE TABLE orders"),
-            Some("orders".to_string())
+            detect_write_targets("TRUNCATE TABLE orders"),
+            vec!["orders".to_string()]
         );
         assert_eq!(
-            detect_write_target("TRUNCATE orders"),
-            Some("orders".to_string())
+            detect_write_targets("TRUNCATE orders"),
+            vec!["orders".to_string()]
         );
     }
 
     #[test]
-    fn test_detect_write_select_is_none() {
-        assert_eq!(
-            detect_write_target("SELECT * FROM orders WHERE id = 1"),
-            None
-        );
+    fn test_detect_write_select_is_empty() {
+        assert!(detect_write_targets("SELECT * FROM orders WHERE id = 1").is_empty());
     }
 
     #[test]
     fn test_detect_write_drop_table() {
         assert_eq!(
-            detect_write_target("DROP TABLE orders"),
-            Some("orders".to_string())
+            detect_write_targets("DROP TABLE orders"),
+            vec!["orders".to_string()]
         );
     }
 
     #[test]
     fn test_detect_write_alter_table() {
         assert_eq!(
-            detect_write_target("ALTER TABLE orders ADD COLUMN status TEXT"),
-            Some("orders".to_string())
+            detect_write_targets("ALTER TABLE orders ADD COLUMN status TEXT"),
+            vec!["orders".to_string()]
         );
     }
 
     #[test]
     fn test_detect_write_create_table() {
         assert_eq!(
-            detect_write_target("CREATE TABLE orders (id INT)"),
-            Some("orders".to_string())
+            detect_write_targets("CREATE TABLE orders (id INT)"),
+            vec!["orders".to_string()]
         );
     }
 
     #[test]
     fn test_detect_write_exec() {
         assert_eq!(
-            detect_write_target("EXEC sp_rename 'orders', 'orders_old'"),
-            Some("sp_rename".to_string())
+            detect_write_targets("EXEC sp_rename 'orders', 'orders_old'"),
+            vec!["sp_rename".to_string()]
         );
+    }
+
+    #[test]
+    fn test_detect_write_multi_statement() {
+        // Both targets must be returned so the caller can authorise each.
+        let targets = detect_write_targets(
+            "INSERT INTO allowed VALUES (1); DELETE FROM forbidden WHERE id = 1",
+        );
+        assert!(targets.contains(&"allowed".to_string()));
+        assert!(targets.contains(&"forbidden".to_string()));
+    }
+
+    #[test]
+    fn test_detect_write_repeated_keyword() {
+        let targets = detect_write_targets(
+            "INSERT INTO a VALUES (1); INSERT INTO b VALUES (2)",
+        );
+        assert_eq!(targets, vec!["a".to_string(), "b".to_string()]);
+    }
+
+    #[test]
+    fn test_detect_write_non_ascii_identifier_no_panic() {
+        // `to_uppercase()` on these chars used to change byte length and
+        // panic when slicing back into the original string. ASCII-only
+        // uppercasing avoids that.
+        let _ = detect_write_targets("UPDATE café SET x = 1");
+        let _ = detect_write_targets("INSERT INTO ünïçødé (id) VALUES (1)");
+        let _ = detect_write_targets("-- ß is sharp s\nSELECT 1");
     }
 
     // -- strip_schema --

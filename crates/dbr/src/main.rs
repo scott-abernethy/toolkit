@@ -284,12 +284,12 @@ fn cmd_auth_login(conn: Option<&str>) -> Result<()> {
     let tokens = tkdbr::oauth::exchange_code(&host, &code, &verifier, &redirect_uri)?;
 
     // Send tokens to the daemon to store in its secure home directory
-    let req = common::protocol::Request {
-        tool: "dbr".to_owned(),
-        conn: Some(config.conn_name.clone()),
-        op: "auth/store_tokens".to_owned(),
-        params: serde_json::to_value(&tokens).unwrap(),
-    };
+    let req = common::protocol::Request::new(
+        "dbr",
+        Some(config.conn_name.clone()),
+        "auth/store_tokens",
+        serde_json::to_value(&tokens).unwrap(),
+    );
     let result = common::client::send(&req)?;
     print_json(&result);
     eprintln!("Authentication successful.");
@@ -367,12 +367,7 @@ fn command_to_request(conn: Option<String>, command: &Commands) -> Request {
         // Auth is handled before command_to_request is called (see run())
         Commands::Auth { .. } => unreachable!(),
     };
-    Request {
-        tool: "dbr".to_owned(),
-        conn,
-        op: op.to_owned(),
-        params,
-    }
+    Request::new("dbr", conn, op, params)
 }
 
 fn run() -> Result<()> {

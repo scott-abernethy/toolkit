@@ -151,12 +151,7 @@ fn main() {
 
 fn cmd_install() -> Result<()> {
     // Fetch guard apps and install_path from the daemon
-    let req = common::protocol::Request {
-        tool: "guard".into(),
-        conn: None,
-        op: "list".into(),
-        params: serde_json::json!({}),
-    };
+    let req = common::protocol::Request::new("guard", None, "list", serde_json::json!({}));
     let value = client::send(&req)?;
 
     let apps = value

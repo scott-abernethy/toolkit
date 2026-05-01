@@ -43,6 +43,22 @@ impl ToolkitError {
         }
     }
 
+    /// Stable variant tag for audit logs and metrics. Never includes the
+    /// inner message — only the category, so it's safe to aggregate on.
+    pub fn class(&self) -> &'static str {
+        match self {
+            Self::Config(_) => "config",
+            Self::Connection(_) => "connection",
+            Self::Auth(_) => "auth",
+            Self::NotFound(_) => "not_found",
+            Self::Permission(_) => "permission",
+            Self::WriteDenied(_) => "write_denied",
+            Self::Cli(_) => "cli",
+            Self::Daemon(_) => "daemon",
+            Self::Other(_) => "other",
+        }
+    }
+
     pub fn config(msg: impl Into<String>) -> Self {
         Self::Config(msg.into())
     }

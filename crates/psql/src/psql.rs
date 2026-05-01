@@ -6,7 +6,15 @@ use postgres::types::Type;
 use postgres_native_tls::MakeTlsConnector;
 use serde::Deserialize;
 use serde_json::{Map, Value};
+use std::time::Duration;
 use uuid::Uuid;
+
+/// Maximum time to wait for the TCP/TLS handshake before giving up.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Server-side `statement_timeout` (milliseconds). Long-running queries are
+/// aborted by Postgres itself, releasing the daemon thread that called us.
+const STATEMENT_TIMEOUT_MS: u64 = 60_000;
 
 // ---------------------------------------------------------------------------
 // Config
@@ -27,10 +35,6 @@ pub struct ConnConfig {
 }
 
 impl ConnConfig {
-    fn is_readonly(&self) -> bool {
-        self.writable_tables.as_ref().map_or(true, |t| t.is_empty())
-    }
-
     fn use_tls(&self) -> bool {
         self.tls.unwrap_or(false)
     }
@@ -49,16 +53,23 @@ fn connect(config: &ConnConfig) -> Result<postgres::Client> {
     cfg.host(&config.host)
         .port(config.port)
         .dbname(&config.database)
-        .user(&config.user);
+        .user(&config.user)
+        .connect_timeout(CONNECT_TIMEOUT);
 
     if let Some(pw) = &config.password {
         cfg.password(pw);
     }
 
-    // Enforce read-only at the session level for connections with no write tables.
-    if config.is_readonly() {
-        cfg.options("-c default_transaction_read_only=on");
-    }
+    // Always start the session read-only at the server. Writes to allowlisted
+    // tables are wrapped in a transaction with `SET LOCAL transaction_read_write`
+    // so the read-only default is the floor for everything else, including
+    // anything outside the explicit write statement.
+    //
+    // statement_timeout aborts long-running queries server-side so a stuck
+    // query can't pin a daemon thread indefinitely.
+    cfg.options(&format!(
+        "-c default_transaction_read_only=on -c statement_timeout={STATEMENT_TIMEOUT_MS}"
+    ));
 
     if config.use_tls() {
         let tls = TlsConnector::builder()
@@ -93,7 +104,10 @@ fn sanitize_pg_error(e: &postgres::Error) -> ToolkitError {
     } else if msg.contains("ssl") || msg.contains("tls") {
         ToolkitError::connection("ssl error")
     } else if let Some(db_err) = e.as_db_error() {
-        ToolkitError::other(db_err.message().to_string())
+        // Whitelist SQLSTATE only — db_error.message() can echo client
+        // identifiers or backend internals. Agents can look up SQLSTATE codes
+        // (e.g. 42P01 = undefined_table, 42601 = syntax_error).
+        ToolkitError::other(format!("database error: SQLSTATE {}", db_err.code().code()))
     } else {
         ToolkitError::other("query error")
     }
@@ -210,10 +224,37 @@ fn exec_query(
 // ---------------------------------------------------------------------------
 
 pub fn run_query(config: &ConnConfig, sql: &str) -> Result<QueryResponse> {
-    if let Some(table) = sql::detect_write_target(sql) {
-        sql::assert_write_allowed(config.writable_tables.as_ref(), &table)?;
+    // Authorise every write target individually. Multi-statement input like
+    // `INSERT INTO allowed; DELETE FROM forbidden` only passes if every
+    // target is on the allowlist.
+    let targets = sql::detect_write_targets(sql);
+    for table in &targets {
+        sql::assert_write_allowed(config.writable_tables.as_ref(), table)?;
     }
-    let raw = exec_query(config, sql, &[])?;
+
+    let raw = if targets.is_empty() {
+        exec_query(config, sql, &[])?
+    } else {
+        // Session is read-only; flip to read-write only for the duration of
+        // this transaction. ROLLBACK on error preserves the read-only floor.
+        let mut client = connect(config)?;
+        client
+            .batch_execute("BEGIN; SET LOCAL transaction_read_write;")
+            .map_err(|e| sanitize_pg_error(&e))?;
+        match client.query(sql, &[]) {
+            Ok(rows) => {
+                client
+                    .batch_execute("COMMIT;")
+                    .map_err(|e| sanitize_pg_error(&e))?;
+                rows
+            }
+            Err(e) => {
+                let _ = client.batch_execute("ROLLBACK;");
+                return Err(sanitize_pg_error(&e));
+            }
+        }
+    };
+
     let rows: Vec<Map<String, Value>> = raw.iter().map(row_to_json).collect();
     Ok(QueryResponse::from_rows(rows))
 }

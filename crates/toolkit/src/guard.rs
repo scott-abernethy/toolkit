@@ -10,12 +10,12 @@ use common::Result;
 /// The daemon reads its config (inaccessible to the agent UID) and returns
 /// the ConnConfig as JSON. Rule checking and CLI execution happen locally.
 pub fn load_config(app: &str, conn: Option<&str>) -> Result<ConnConfig> {
-    let req = Request {
-        tool: "guard".into(),
-        conn: conn.map(|s| s.to_string()),
-        op: "config".into(),
-        params: serde_json::json!({ "app": app }),
-    };
+    let req = Request::new(
+        "guard",
+        conn.map(|s| s.to_string()),
+        "config",
+        serde_json::json!({ "app": app }),
+    );
     let value = common::client::send(&req)?;
     serde_json::from_value(value)
         .map_err(|e| common::ToolkitError::other(format!("invalid guard config from daemon: {e}")))
