@@ -85,12 +85,19 @@ class Toolkit < Formula
   end
 
   def post_install
-    system "sudo", "#{opt_libexec}/setup-daemon.sh"
+    opoo "Run the following to complete daemon setup:"
+    opoo "  sudo #{opt_libexec}/setup-daemon.sh"
   end
 
   def caveats
     <<~EOS
-      The daemon setup script was run automatically. Add your connections:
+      Complete daemon setup by running (requires sudo):
+
+        sudo #{opt_libexec}/setup-daemon.sh
+
+      This is required after both fresh installs and upgrades.
+
+      Then add your connections:
 
         toolkit daemon config edit
 
