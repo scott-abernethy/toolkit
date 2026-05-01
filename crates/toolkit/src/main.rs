@@ -236,9 +236,11 @@ fn cmd_install() -> Result<()> {
 }
 
 fn cmd_config_edit() -> Result<()> {
-    let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vi".to_string());
+    // Choose an editor that's likely to be available in the _toolkit user's environment.
+    // Don't use EDITOR env var because it may not be set or accessible for _toolkit user.
+    let editor = "vim";
     let status = process::Command::new("sudo")
-        .args(["-u", DAEMON_USER, &editor, DAEMON_CONFIG_PATH])
+        .args(["-u", DAEMON_USER, editor, DAEMON_CONFIG_PATH])
         .status()
         .map_err(|e| ToolkitError::other(format!("failed to run sudo: {e}")))?;
     if !status.success() {
