@@ -12,6 +12,11 @@ use std::time::Duration;
 
 #[derive(Deserialize)]
 pub struct ConnConfig {
+    /// Path or name of the Databricks CLI command to invoke.
+    /// Defaults to "databricks". Set to an absolute path (e.g. "/opt/homebrew/bin/databricks")
+    /// when running via the daemon which may have a restricted PATH.
+    #[serde(default = "default_databricks_command")]
+    pub command: String,
     /// Environment variables to inject when running the Databricks CLI.
     /// Expected keys: DATABRICKS_HOST, DATABRICKS_TOKEN (or other auth vars),
     /// and optionally DATABRICKS_WAREHOUSE_ID.
@@ -24,6 +29,10 @@ pub struct ConnConfig {
     /// Connection name (not from config file — set by load_config)
     #[serde(skip)]
     pub conn_name: String,
+}
+
+fn default_databricks_command() -> String {
+    "databricks".to_string()
 }
 
 impl ConnConfig {
@@ -132,7 +141,7 @@ pub fn store_oauth_tokens(conn: &str, tokens: &crate::oauth::TokenPair) -> Resul
 /// Run a `databricks` subcommand and return parsed JSON output.
 /// Global flags (--output) are prepended; subcommand args follow.
 fn run_databricks(config: &ConnConfig, args: &[&str]) -> Result<Value> {
-    let mut cmd = Command::new("databricks");
+    let mut cmd = Command::new(&config.command);
 
     cmd.arg("--output").arg("json");
 
@@ -169,7 +178,7 @@ fn run_databricks(config: &ConnConfig, args: &[&str]) -> Result<Value> {
 /// Run a databricks command that doesn't produce JSON output (e.g. bundle commands).
 /// Returns (stdout, stderr) if successful.
 fn run_databricks_no_json(config: &ConnConfig, args: &[&str]) -> Result<(String, String)> {
-    let mut cmd = Command::new("databricks");
+    let mut cmd = Command::new(&config.command);
 
     // Subcommand and its args
     cmd.args(args);
@@ -206,7 +215,7 @@ fn run_databricks_no_json(config: &ConnConfig, args: &[&str]) -> Result<(String,
 /// Run `databricks api post <path>` with a JSON body and return parsed JSON output.
 fn run_databricks_api_post(config: &ConnConfig, path: &str, body: &Value) -> Result<Value> {
     let body_str = serde_json::to_string(body).unwrap();
-    let mut cmd = Command::new("databricks");
+    let mut cmd = Command::new(&config.command);
 
     cmd.args(["api", "post", path, "--json", &body_str]);
 
@@ -238,7 +247,7 @@ fn run_databricks_api_post(config: &ConnConfig, path: &str, body: &Value) -> Res
 
 /// Run `databricks api get <path>` and return parsed JSON output.
 fn run_databricks_api_get(config: &ConnConfig, path: &str) -> Result<Value> {
-    let mut cmd = Command::new("databricks");
+    let mut cmd = Command::new(&config.command);
 
     cmd.args(["api", "get", path]);
 

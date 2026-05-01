@@ -79,7 +79,7 @@ Adding a new service requires only a config stanza, not a new Rust crate:
 ```yaml
 kubectl:
   dev:
-    binary: kubectl
+    command: kubectl
     env:
       KUBECONFIG: /path/to/dev.kubeconfig
     allow:

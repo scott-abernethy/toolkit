@@ -9,8 +9,8 @@ use std::process::Command;
 
 #[derive(Deserialize)]
 pub struct ConnConfig {
-    /// Path to the CLI binary (e.g. "kubectl", "/usr/local/bin/pup")
-    pub binary: String,
+    /// Path or name of the CLI command to invoke (e.g. "kubectl", "/usr/local/bin/pup")
+    pub command: String,
     /// Environment variables to inject when running the CLI
     #[serde(default)]
     pub env: HashMap<String, String>,
@@ -71,7 +71,7 @@ pub fn check_rules(config: &ConnConfig, args: &[&str]) -> Result<()> {
 /// Run the wrapped CLI with credential injection and raw passthrough.
 /// Returns the wrapped CLI's exit code on success.
 pub fn run(config: &ConnConfig, args: &[String]) -> Result<i32> {
-    let mut cmd = Command::new(&config.binary);
+    let mut cmd = Command::new(&config.command);
 
     for (k, v) in &config.env {
         cmd.env(k, v);
@@ -82,11 +82,11 @@ pub fn run(config: &ConnConfig, args: &[String]) -> Result<i32> {
     let status = cmd.status().map_err(|e| {
         let msg = e.to_string().to_lowercase();
         if msg.contains("not found") || msg.contains("no such file") {
-            ToolkitError::not_found(format!("binary not found: {}", config.binary))
+            ToolkitError::not_found(format!("command not found: {}", config.command))
         } else if msg.contains("permission denied") {
-            ToolkitError::permission(format!("permission denied: {}", config.binary))
+            ToolkitError::permission(format!("permission denied: {}", config.command))
         } else {
-            ToolkitError::cli(format!("failed to run {}: {}", config.binary, e))
+            ToolkitError::cli(format!("failed to run {}: {}", config.command, e))
         }
     })?;
 
@@ -168,7 +168,7 @@ mod tests {
     #[test]
     fn test_check_rules_allowed() {
         let config = ConnConfig {
-            binary: "test".into(),
+            command: "test".into(),
             env: HashMap::new(),
             allow: vec!["get pods".into()],
             deny: vec![],
@@ -179,7 +179,7 @@ mod tests {
     #[test]
     fn test_check_rules_empty_allow_permits_all() {
         let config = ConnConfig {
-            binary: "test".into(),
+            command: "test".into(),
             env: HashMap::new(),
             allow: vec![],
             deny: vec![],
@@ -190,7 +190,7 @@ mod tests {
     #[test]
     fn test_check_rules_denied_by_deny() {
         let config = ConnConfig {
-            binary: "test".into(),
+            command: "test".into(),
             env: HashMap::new(),
             allow: vec![],
             deny: vec!["secret|secrets".into()],
@@ -204,7 +204,7 @@ mod tests {
     #[test]
     fn test_check_rules_denied_by_no_allow_match() {
         let config = ConnConfig {
-            binary: "test".into(),
+            command: "test".into(),
             env: HashMap::new(),
             allow: vec!["get pods".into()],
             deny: vec![],
@@ -222,7 +222,7 @@ mod tests {
         let file = tempfile::NamedTempFile::with_suffix(".yaml").unwrap();
         std::fs::write(
             file.path(),
-            "myapp:\n  only:\n    binary: echo\n    env: {}\n    allow: []\n    deny: []\n",
+            "myapp:\n  only:\n    command: echo\n    env: {}\n    allow: []\n    deny: []\n",
         )
         .unwrap();
 
@@ -231,7 +231,7 @@ mod tests {
         let config = load_config("myapp", None).unwrap();
         std::env::remove_var("TOOLKIT_CONFIG");
 
-        assert_eq!(config.binary, "echo");
+        assert_eq!(config.command, "echo");
     }
 
     #[test]
@@ -239,7 +239,7 @@ mod tests {
         let file = tempfile::NamedTempFile::with_suffix(".yaml").unwrap();
         std::fs::write(
             file.path(),
-            "myapp:\n  a:\n    binary: alpha\n    env: {}\n    allow: []\n    deny: []\n  b:\n    binary: beta\n    env: {}\n    allow: []\n    deny: []\n",
+            "myapp:\n  a:\n    command: alpha\n    env: {}\n    allow: []\n    deny: []\n  b:\n    command: beta\n    env: {}\n    allow: []\n    deny: []\n",
         )
         .unwrap();
 
@@ -248,7 +248,7 @@ mod tests {
         let config = load_config("myapp", Some("b")).unwrap();
         std::env::remove_var("TOOLKIT_CONFIG");
 
-        assert_eq!(config.binary, "beta");
+        assert_eq!(config.command, "beta");
     }
 
     /// Mutex to serialise tests that read/write process-global env vars.

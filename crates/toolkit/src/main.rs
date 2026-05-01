@@ -283,7 +283,7 @@ fn cmd_install() -> Result<()> {
         .as_mapping()
         .ok_or_else(|| ToolkitError::config("Config is not a YAML mapping"))?;
 
-    // Discover guarded apps: top-level sections where any connection has a "binary" field.
+    // Discover guarded apps: top-level sections where any connection has a "command" field.
     let mut scripts: Vec<(String, String, String)> = Vec::new(); // (name, app, conn)
     for (section_key, section_val) in mapping {
         let app = match section_key.as_str() {
@@ -299,8 +299,8 @@ fn cmd_install() -> Result<()> {
                 Some(s) => s,
                 None => continue,
             };
-            // A guarded connection has a "binary" field
-            if conn_val.get("binary").and_then(|v| v.as_str()).is_some() {
+            // A guarded connection has a "command" field
+            if conn_val.get("command").and_then(|v| v.as_str()).is_some() {
                 let name = format!("tk{}-{}", app, conn);
                 scripts.push((name, app.to_string(), conn.to_string()));
             }
@@ -309,11 +309,11 @@ fn cmd_install() -> Result<()> {
 
     if scripts.is_empty() {
         println!("No guarded apps found in config.");
-        println!("Guarded app connections have a 'binary' field. Example:");
+        println!("Guarded app connections have a 'command' field. Example:");
         println!();
         println!("  kubectl:");
         println!("    dev:");
-        println!("      binary: kubectl");
+        println!("      command: kubectl");
         println!("      env:");
         println!("        KUBECONFIG: /path/to/kubeconfig");
         println!("      allow:");
@@ -681,7 +681,7 @@ psql:
             "\
 dbr:
   dev:
-    binary: databricks
+    command: databricks
     env:
       DATABRICKS_HOST: https://dbc-abc123.cloud.databricks.com
       DATABRICKS_AUTH_TYPE: external-browser
