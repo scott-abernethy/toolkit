@@ -6,8 +6,8 @@ Defence-in-depth configuration for AI agent harnesses. These recipes add a secon
 
 | Threat | Mechanism |
 |--------|-----------|
-| Agent runs `sops`/`age` directly | `permissions.deny` (Claude) / bash deny (opencode) |
-| Agent reads `~/.config/toolkit` or `~/.config/sops` via Read tool | Read hook / opencode read deny |
+| Agent runs `toolkit` management commands directly | `permissions.deny` (Claude) / bash deny (opencode) |
+| Agent reads `~/.config/toolkit` via Read tool | Read hook / opencode read deny |
 | Agent reads `~/.ssh`, `~/.aws`, `~/.gnupg`, etc. | Read hook / opencode read deny |
 | Agent reads `.env` files | Read hook / opencode read deny |
 | Agent runs `toolkit config show` | Blocked by toolkit's `reject_if_agent()` + `Bash(toolkit:*)` deny |

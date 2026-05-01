@@ -34,7 +34,6 @@ path_under() {
 # Protected directory prefixes — block any file inside these directories
 PROTECTED_DIRS=(
     "$HOME/.config/toolkit"
-    "$HOME/.config/sops"
     "$HOME/.ssh"
     "$HOME/.aws"
     "$HOME/.gnupg"

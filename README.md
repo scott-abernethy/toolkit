@@ -14,7 +14,7 @@ AI coding agents (Claude Code, GitHub Copilot CLI, opencode, etc.) are increasin
 
 `toolkit-daemon` runs as a dedicated `_toolkit` system user that owns the config file. The agent UID has no read access. CLI tools (`tkpsql` et al.) connect over a UNIX socket with peer-UID enforcement. Combined with sandboxing the agent itself (sandbox-exec, bwrap, container), this defeats a hostile agent on a single box.
 
-Defence is layered: toolkit's own checks sit on top of (a) harness denylists like `Bash(toolkit:*)` and `Bash(sops:*)`, (b) per-tool agent hooks that block access to credential stores, and (c) DB-side GRANTs / read-only roles. Treat toolkit's own checks as defence-in-depth on top of those, not as the only line.
+Defence is layered: toolkit's own checks sit on top of (a) harness denylists like `Bash(toolkit:*)`, (b) per-tool agent hooks that block access to credential stores, and (c) DB-side GRANTs / read-only roles. Treat toolkit's own checks as defence-in-depth on top of those, not as the only line.
 
 ## What Toolkit Does
 
@@ -147,8 +147,8 @@ See [skills/README.md](skills/README.md) for full setup details and troubleshoot
 
 Toolkit's threat model explicitly calls out that harness-level hooks are a required layer alongside toolkit's own controls. The `hooks/` directory provides ready-to-use recipes for Claude Code and opencode that block:
 
-- Direct `sops`, `age`, and `toolkit` management commands via the Bash tool
-- File reads to `~/.config/toolkit`, `~/.config/sops`, `~/.ssh`, `~/.aws`, `~/.gnupg`, and other credential stores via the Read tool
+- Direct `toolkit` management commands via the Bash tool
+- File reads to `~/.config/toolkit`, `~/.ssh`, `~/.aws`, `~/.gnupg`, and other credential stores via the Read tool
 - `.env` file reads (project-local secrets)
 
 ```sh

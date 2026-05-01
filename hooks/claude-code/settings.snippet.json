@@ -2,9 +2,6 @@
   "_comment": "Merge this into ~/.claude/settings.json. Install hook scripts first: just install-hooks",
   "permissions": {
     "deny": [
-      "Bash(sops:*)",
-      "Bash(age:*)",
-      "Bash(age-keygen:*)",
       "Bash(toolkit:*)"
     ]
   },

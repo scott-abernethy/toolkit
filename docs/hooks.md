@@ -6,8 +6,7 @@ Defence-in-depth configuration snippets for AI agent harnesses. These sit **outs
 
 Toolkit's built-in protections stop agents from running `toolkit config show` or similar privileged commands directly. But the agent still shares your UID, so an agent could:
 
-- Read `~/.config/sops/age/keys.txt` using the harness's **Read** tool
-- Run `sops decrypt ~/.config/toolkit/config.yaml` via the **Bash** tool
+- Read the toolkit config at `~/.config/toolkit/config.yaml` using the harness's **Read** tool
 - Read `.env` files or other credential stores unrelated to toolkit
 
 Harness hooks address these gaps by blocking specific operations before they reach the filesystem.
@@ -27,8 +26,7 @@ The structural fix for a hostile agent is running the agent under a separate UID
 
 | Path | Notes |
 |------|-------|
-| `~/.config/toolkit/` | Sops-encrypted toolkit config (contains all credentials) |
-| `~/.config/sops/` | Age private key used to decrypt toolkit config |
+| `~/.config/toolkit/` | Toolkit config (contains all credentials, owned by `_toolkit` daemon user) |
 | `~/.ssh/` | SSH private keys |
 | `~/.aws/` | AWS credentials and config |
 | `~/.gnupg/` | GPG keys |
@@ -57,7 +55,7 @@ Two hook scripts are installed to `~/.config/toolkit/hooks/`:
 
 **`read-guard`** (primary) — blocks the Claude Code `Read` tool from accessing credential paths listed above. Fail-closed: blocks on internal error.
 
-**`bash-guard`** (secondary) — blocks the `Bash` tool from running `sops`/`age`/`toolkit` directly, and blocks common file-reading commands (`cat`, `head`, `tail`, `less`, `more`, `bat`, `nano`, `vim`, `emacs`) when targeting credential directories. Best-effort only.
+**`bash-guard`** (secondary) — blocks the `Bash` tool from running `toolkit` directly, and blocks common file-reading commands (`cat`, `head`, `tail`, `less`, `more`, `bat`, `nano`, `vim`, `emacs`) when targeting credential directories. Best-effort only.
 
 ### Settings
 
@@ -67,9 +65,6 @@ The `permissions.deny` list stops the most common attack vectors without needing
 {
   "permissions": {
     "deny": [
-      "Bash(sops:*)",
-      "Bash(age:*)",
-      "Bash(age-keygen:*)",
       "Bash(toolkit:*)"
     ]
   }
@@ -106,9 +101,6 @@ opencode's permission system provides granular per-tool allow/deny rules in `~/.
   "permission": {
     "bash": {
       "*": "ask",
-      "sops *": "deny",
-      "age *": "deny",
-      "age-keygen *": "deny",
       "toolkit *": "deny"
     },
     "read": {
@@ -117,7 +109,6 @@ opencode's permission system provides granular per-tool allow/deny rules in `~/.
       "*.env.*": "deny",
       "*.env.example": "allow",
       "~/.config/toolkit/**": "deny",
-      "~/.config/sops/**": "deny",
       "~/.ssh/**": "deny",
       "~/.aws/**": "deny"
     },
@@ -160,19 +151,19 @@ GitHub Copilot CLI does not expose a per-command deny list in `~/.copilot/settin
 ## Security constraints
 
 Do not read files outside the current project directory without explicit user instruction.
-Do not run: sops, age, age-keygen, toolkit config.
-Do not read: ~/.config/toolkit, ~/.config/sops, ~/.ssh, ~/.aws, ~/.gnupg, .env files.
+Do not run: toolkit config.
+Do not read: ~/.config/toolkit, ~/.ssh, ~/.aws, ~/.gnupg, .env files.
 ```
 
 3. **`trustedFolders`** — only project directories listed in `~/.copilot/settings.json` under `trustedFolders` are treated as trusted. Avoid adding `~/.config` or home directory paths.
 
-For stronger protection under Copilot CLI, the structural answer is the daemon transport (issue #6, step c) which moves credentials behind a different UID.
+For stronger protection under Copilot CLI, the structural answer is the daemon transport which moves credentials behind a different UID.
 
-## macOS: Touch ID boundary (for step c)
+## macOS: Touch ID boundary
 
-The hook recipes above protect against accidental access. For the stronger guarantee (defeating a hostile agent), see the implementation notes in issue #6 — the daemon transport with Touch ID-gated `sudo` is the intended boundary.
+The hook recipes above protect against accidental access. For the stronger guarantee (defeating a hostile agent), the daemon transport with Touch ID-gated `sudo` is the intended boundary.
 
-Key points from that design:
-- `_toolkit` system user owns the age key and config
+Key points:
+- `_toolkit` system user owns the config file (mode 0600)
 - `toolkit-admin` requires Touch ID (`pam_tid.so` in `/etc/pam.d/sudo_local`)
 - GUI screen-sharing and SSH sessions do **not** get Touch ID — document this gap prominently

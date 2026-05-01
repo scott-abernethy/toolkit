@@ -21,8 +21,6 @@ pub enum ToolkitError {
     WriteDenied(String),
     /// A wrapped CLI failed in a way we couldn't classify.
     Cli(String),
-    /// sops encryption / decryption failure.
-    Crypto(String),
     /// Daemon not reachable via UNIX socket (connection refused / no such file).
     Daemon(String),
     /// Catch-all for cases that don't fit the other variants.
@@ -40,7 +38,6 @@ impl ToolkitError {
             | Self::Permission(m)
             | Self::WriteDenied(m)
             | Self::Cli(m)
-            | Self::Crypto(m)
             | Self::Daemon(m)
             | Self::Other(m) => m,
         }
@@ -66,9 +63,6 @@ impl ToolkitError {
     }
     pub fn cli(msg: impl Into<String>) -> Self {
         Self::Cli(msg.into())
-    }
-    pub fn crypto(msg: impl Into<String>) -> Self {
-        Self::Crypto(msg.into())
     }
     pub fn daemon(msg: impl Into<String>) -> Self {
         Self::Daemon(msg.into())
