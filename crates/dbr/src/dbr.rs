@@ -168,6 +168,10 @@ fn run_databricks(config: &ConnConfig, args: &[&str]) -> Result<Value> {
         } else {
             stdout.trim().to_string()
         };
+        common::errorlog::append(
+            &format!("dbr/{} {:?}", config.conn_name, args),
+            &raw_msg,
+        );
         return Err(sanitize_cli_error(&raw_msg));
     }
 
@@ -203,6 +207,10 @@ fn run_databricks_no_json(config: &ConnConfig, args: &[&str]) -> Result<(String,
         } else {
             stdout.trim().to_string()
         };
+        common::errorlog::append(
+            &format!("dbr/{} {:?}", config.conn_name, args),
+            &raw_msg,
+        );
         return Err(sanitize_cli_error(&raw_msg));
     }
 
@@ -238,6 +246,10 @@ fn run_databricks_api_post(config: &ConnConfig, path: &str, body: &Value) -> Res
         } else {
             stdout.trim().to_string()
         };
+        common::errorlog::append(
+            &format!("dbr/{} api post {}", config.conn_name, path),
+            &raw_msg,
+        );
         return Err(sanitize_cli_error(&raw_msg));
     }
 
@@ -270,6 +282,10 @@ fn run_databricks_api_get(config: &ConnConfig, path: &str) -> Result<Value> {
         } else {
             stdout.trim().to_string()
         };
+        common::errorlog::append(
+            &format!("dbr/{} api get {}", config.conn_name, path),
+            &raw_msg,
+        );
         return Err(sanitize_cli_error(&raw_msg));
     }
 
