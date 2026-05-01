@@ -138,22 +138,29 @@ pub fn store_oauth_tokens(conn: &str, tokens: &crate::oauth::TokenPair) -> Resul
     Ok(json!({"ok": true}))
 }
 
-/// Run a `databricks` subcommand and return parsed JSON output.
-/// Global flags (--output) are prepended; subcommand args follow.
-fn run_databricks(config: &ConnConfig, args: &[&str]) -> Result<Value> {
+/// Build a `databricks` command with credentials and config file suppression applied.
+///
+/// When toolkit has a managed token (OAuth or PAT), it injects `DATABRICKS_TOKEN`
+/// and forces `DATABRICKS_AUTH_TYPE=pat` so the CLI uses the injected token rather
+/// than falling back to its own token cache (which may be empty or expired).
+fn build_cmd(config: &ConnConfig) -> Result<Command> {
     let mut cmd = Command::new(&config.command);
-
-    cmd.arg("--output").arg("json");
-
-    // Subcommand and its args
-    cmd.args(args);
-
-    // Inject credentials via env vars; prevent CLI from reading any default config
     cmd.envs(&config.env);
     cmd.env("DATABRICKS_CONFIG_FILE", "/dev/null");
     if let Some(token) = get_effective_token(config)? {
         cmd.env("DATABRICKS_TOKEN", token);
+        cmd.env("DATABRICKS_AUTH_TYPE", "pat");
     }
+    Ok(cmd)
+}
+
+/// Run a `databricks` subcommand and return parsed JSON output.
+/// Global flags (--output) are prepended; subcommand args follow.
+fn run_databricks(config: &ConnConfig, args: &[&str]) -> Result<Value> {
+    let mut cmd = build_cmd(config)?;
+
+    cmd.arg("--output").arg("json");
+    cmd.args(args);
 
     let output = cmd
         .output()
@@ -182,17 +189,9 @@ fn run_databricks(config: &ConnConfig, args: &[&str]) -> Result<Value> {
 /// Run a databricks command that doesn't produce JSON output (e.g. bundle commands).
 /// Returns (stdout, stderr) if successful.
 fn run_databricks_no_json(config: &ConnConfig, args: &[&str]) -> Result<(String, String)> {
-    let mut cmd = Command::new(&config.command);
+    let mut cmd = build_cmd(config)?;
 
-    // Subcommand and its args
     cmd.args(args);
-
-    // Inject credentials via env vars; prevent CLI from reading any default config
-    cmd.envs(&config.env);
-    cmd.env("DATABRICKS_CONFIG_FILE", "/dev/null");
-    if let Some(token) = get_effective_token(config)? {
-        cmd.env("DATABRICKS_TOKEN", token);
-    }
 
     let output = cmd
         .output()
@@ -223,16 +222,9 @@ fn run_databricks_no_json(config: &ConnConfig, args: &[&str]) -> Result<(String,
 /// Run `databricks api post <path>` with a JSON body and return parsed JSON output.
 fn run_databricks_api_post(config: &ConnConfig, path: &str, body: &Value) -> Result<Value> {
     let body_str = serde_json::to_string(body).unwrap();
-    let mut cmd = Command::new(&config.command);
+    let mut cmd = build_cmd(config)?;
 
     cmd.args(["api", "post", path, "--json", &body_str]);
-
-    // Inject credentials via env vars; prevent CLI from reading any default config
-    cmd.envs(&config.env);
-    cmd.env("DATABRICKS_CONFIG_FILE", "/dev/null");
-    if let Some(token) = get_effective_token(config)? {
-        cmd.env("DATABRICKS_TOKEN", token);
-    }
 
     let output = cmd
         .output()
@@ -259,16 +251,9 @@ fn run_databricks_api_post(config: &ConnConfig, path: &str, body: &Value) -> Res
 
 /// Run `databricks api get <path>` and return parsed JSON output.
 fn run_databricks_api_get(config: &ConnConfig, path: &str) -> Result<Value> {
-    let mut cmd = Command::new(&config.command);
+    let mut cmd = build_cmd(config)?;
 
     cmd.args(["api", "get", path]);
-
-    // Inject credentials via env vars; prevent CLI from reading any default config
-    cmd.envs(&config.env);
-    cmd.env("DATABRICKS_CONFIG_FILE", "/dev/null");
-    if let Some(token) = get_effective_token(config)? {
-        cmd.env("DATABRICKS_TOKEN", token);
-    }
 
     let output = cmd
         .output()
@@ -292,6 +277,7 @@ fn run_databricks_api_get(config: &ConnConfig, path: &str) -> Result<Value> {
     serde_json::from_slice::<Value>(&output.stdout)
         .map_err(|e| ToolkitError::cli(format!("Failed to parse API response: {}", e)))
 }
+
 
 /// Strip credentials and reduce noisy CLI error messages to a single actionable line.
 fn sanitize_cli_error(msg: &str) -> ToolkitError {
