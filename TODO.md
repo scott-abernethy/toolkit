@@ -10,4 +10,5 @@
 - `tkpsql` opens a fresh PG connection per query. Probably fine; revisit if latency becomes a complaint.
 - SQL travels via argv. Add `--sql -` (stdin) or `--sql-file` to remove it from `/proc/PID/cmdline` and shell history. Doesn't fix harness-transcript exposure (structural to CLI mode).
 - JSON output shapes are slightly inconsistent (`{"rows": …}` for `tkpsql tables` and `describe`, which aren't really rows). Cosmetic.
+- Per-UID access policy (design decision pending): currently all authenticated UIDs get identical access — no way to say "agent A may query prod read-only, agent B may also trigger jobs." Options include per-UID allowlists in the daemon config keyed by tool/conn/op, or a capabilities token the caller presents. Needs a design decision before implementation.
 - Two async runtimes: `tkpsql` is sync (`postgres`); `tkmsql` is async (`tiberius` + tokio). Real but small cost (compile time, binary size). Only worth merging if SQL paths get consolidated into a shared crate.
