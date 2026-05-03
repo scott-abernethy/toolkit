@@ -237,9 +237,7 @@ mod tests {
 
     #[test]
     fn test_detect_write_repeated_keyword() {
-        let targets = detect_write_targets(
-            "INSERT INTO a VALUES (1); INSERT INTO b VALUES (2)",
-        );
+        let targets = detect_write_targets("INSERT INTO a VALUES (1); INSERT INTO b VALUES (2)");
         assert_eq!(targets, vec!["a".to_string(), "b".to_string()]);
     }
 

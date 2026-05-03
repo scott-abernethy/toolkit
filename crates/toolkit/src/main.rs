@@ -271,10 +271,35 @@ fn cmd_status() -> Result<()> {
     let socket_path =
         std::env::var("TOOLKIT_SOCKET").unwrap_or_else(|_| client::DEFAULT_SOCKET.to_owned());
     let reachable = UnixStream::connect(&socket_path).is_ok();
-    println!(
-        "{}",
-        serde_json::json!({"socket": socket_path, "reachable": reachable})
-    );
+
+    let cli_version = common::protocol::PROTOCOL_VERSION;
+    let daemon_version: Option<u32> = if reachable {
+        let req = common::protocol::Request::new("meta", None, "version", serde_json::json!({}));
+        client::send(&req).ok().and_then(|v| {
+            v.get("protocol_version")
+                .and_then(|v| v.as_u64())
+                .map(|v| v as u32)
+        })
+    } else {
+        None
+    };
+
+    let mut out = serde_json::json!({
+        "socket": socket_path,
+        "reachable": reachable,
+        "protocol_version": {
+            "cli": cli_version,
+            "daemon": daemon_version,
+        },
+    });
+    if let Some(d) = daemon_version {
+        if d != cli_version {
+            out["warning"] = serde_json::json!(format!(
+                "protocol version mismatch — cli={cli_version}, daemon={d}"
+            ));
+        }
+    }
+    println!("{out}");
     Ok(())
 }
 

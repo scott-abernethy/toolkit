@@ -29,7 +29,32 @@ pub async fn dispatch(req: Request) -> Response {
         "msql" => dispatch_msql(req).await,
         "dbr" => dispatch_dbr(req).await,
         "guard" => dispatch_guard(req).await,
+        "meta" => dispatch_meta(req).await,
         other => Response::err_class(format!("unknown tool: {other}"), "unknown_tool"),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// meta dispatch — daemon self-introspection (version, etc.)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "op", rename_all = "lowercase")]
+enum MetaOp {
+    Version,
+}
+
+// The wire shape of `meta/version` must remain stable across protocol
+// versions so a newer CLI can always discover an older daemon's version.
+async fn dispatch_meta(req: Request) -> Response {
+    let op: MetaOp = match parse_op("meta", &req.op, &req.params) {
+        Ok(o) => o,
+        Err(e) => return Response::err_class(e, "invalid_request"),
+    };
+    match op {
+        MetaOp::Version => Response::ok(serde_json::json!({
+            "protocol_version": PROTOCOL_VERSION,
+        })),
     }
 }
 
@@ -153,9 +178,7 @@ async fn dispatch_msql(req: Request) -> Response {
     };
 
     match op {
-        MsqlOp::Query { sql } => {
-            with_msql_timeout(tkmsql::run_query(&config, &sql), "query").await
-        }
+        MsqlOp::Query { sql } => with_msql_timeout(tkmsql::run_query(&config, &sql), "query").await,
         MsqlOp::Tables { schema } => {
             with_msql_timeout(tkmsql::list_tables(&config, &schema), "tables").await
         }
@@ -518,5 +541,28 @@ mod tests {
     fn non_object_params_rejected() {
         let err = parse_op::<PsqlOp>("psql", "tables", &json!("oops")).unwrap_err();
         assert!(err.contains("must be an object"));
+    }
+
+    #[test]
+    fn meta_version_op_parses() {
+        let op: MetaOp = parse_op("meta", "version", &json!({})).unwrap();
+        assert!(matches!(op, MetaOp::Version));
+    }
+
+    #[tokio::test]
+    async fn meta_version_dispatch_returns_protocol_version() {
+        let req = Request::new("meta", None, "version", json!({}));
+        let resp = dispatch(req).await;
+        assert!(resp.ok, "dispatch failed: {:?}", resp.error);
+        let result = resp.result.expect("result missing");
+        assert_eq!(result["protocol_version"], json!(PROTOCOL_VERSION));
+    }
+
+    #[tokio::test]
+    async fn meta_unknown_op_rejected() {
+        let req = Request::new("meta", None, "frobnicate", json!({}));
+        let resp = dispatch(req).await;
+        assert!(!resp.ok);
+        assert_eq!(resp.error_class, Some("invalid_request"));
     }
 }

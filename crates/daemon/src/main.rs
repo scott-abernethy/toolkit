@@ -86,7 +86,15 @@ async fn handle_connection(
         Some(u) => u,
         None => {
             let resp = Response::err_class("could not determine peer UID", "forbidden");
-            audit::write(audit_log.as_deref(), None, None, None, None, &resp, start.elapsed());
+            audit::write(
+                audit_log.as_deref(),
+                None,
+                None,
+                None,
+                None,
+                &resp,
+                start.elapsed(),
+            );
             let _ = write_response(&mut stream, &resp).await;
             return;
         }
@@ -95,7 +103,15 @@ async fn handle_connection(
     if let Some(ref list) = allowed_uids {
         if !list.is_empty() && !list.contains(&uid) {
             let resp = Response::err_class(format!("UID {uid} not permitted"), "forbidden");
-            audit::write(audit_log.as_deref(), Some(uid), None, None, None, &resp, start.elapsed());
+            audit::write(
+                audit_log.as_deref(),
+                Some(uid),
+                None,
+                None,
+                None,
+                &resp,
+                start.elapsed(),
+            );
             let _ = write_response(&mut stream, &resp).await;
             return;
         }
@@ -109,7 +125,15 @@ async fn handle_connection(
         Ok(0) => return, // EOF — no audit entry for empty connections
         Ok(n) if n > 1 << 20 => {
             let resp = Response::err_class("request too large (> 1 MiB)", "invalid_request");
-            audit::write(audit_log.as_deref(), Some(uid), None, None, None, &resp, start.elapsed());
+            audit::write(
+                audit_log.as_deref(),
+                Some(uid),
+                None,
+                None,
+                None,
+                &resp,
+                start.elapsed(),
+            );
             let _ = write_response_half(&mut writer_half, &resp).await;
             return;
         }
