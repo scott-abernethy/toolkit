@@ -16,6 +16,7 @@ just install
 
 # 2. Link all skills to opencode
 cd ~/path/to/toolkit
+mkdir -p ~/.config/opencode/skills
 for skill in skills/*/; do
   skill_name=$(basename "$skill")
   ln -s "$(pwd)/$skill" ~/.config/opencode/skills/"$skill_name"
@@ -25,6 +26,7 @@ done
 To update existing symlinks (if you're re-running setup), use `-sf`:
 
 ```bash
+mkdir -p ~/.config/opencode/skills
 for skill in skills/*/; do
   skill_name=$(basename "$skill")
   ln -sf "$(pwd)/$skill" ~/.config/opencode/skills/"$skill_name"
@@ -62,12 +64,12 @@ When you ask the agent a question, it searches your installed skills and automat
 **Tool skill** (wraps a CLI tool):
 1. Create a directory: `skills/<tool_name>/`
 2. Add a `SKILL.md` file (follow the pattern in `tkpsql/SKILL.md`)
-3. Link it: `ln -s $(pwd)/skills/<tool_name> ~/.config/opencode/skills/<tool_name>`
+3. Link it: `mkdir -p ~/.config/opencode/skills && ln -s $(pwd)/skills/<tool_name> ~/.config/opencode/skills/<tool_name>`
 
 **Workflow skill** (team convention):
 1. Create a directory: `skills/<skill_name>/`
 2. Add a `SKILL.md` describing the convention/process the agent should follow
-3. Link it: `ln -s $(pwd)/skills/<skill_name> ~/.config/opencode/skills/<skill_name>`
+3. Link it: `mkdir -p ~/.config/opencode/skills && ln -s $(pwd)/skills/<skill_name> ~/.config/opencode/skills/<skill_name>`
 
 ## Environment Setup
 
