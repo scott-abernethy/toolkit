@@ -227,12 +227,20 @@ enum AuthCmd {
 }
 
 fn cmd_auth_login(conn: Option<&str>) -> Result<()> {
-    let config = tkdbr::load_config(conn)?;
-    let host = config
-        .env
-        .get("DATABRICKS_HOST")
+    // Fetch the host from the daemon (config lives in daemon space, not locally)
+    let host_req = common::protocol::Request::new(
+        "dbr",
+        conn.map(String::from),
+        "auth/get_host",
+        serde_json::json!({}),
+    );
+    let host_resp = common::client::send(&host_req)?;
+    let host = host_resp
+        .get("host")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
         .ok_or_else(|| common::ToolkitError::config("DATABRICKS_HOST not set in config env"))?
-        .clone();
+        .to_string();
 
     let (verifier, challenge) = tkdbr::oauth::generate_pkce()?;
     let state = tkdbr::oauth::generate_state();
@@ -286,7 +294,7 @@ fn cmd_auth_login(conn: Option<&str>) -> Result<()> {
     // Send tokens to the daemon to store in its secure home directory
     let req = common::protocol::Request::new(
         "dbr",
-        Some(config.conn_name.clone()),
+        conn.map(String::from),
         "auth/store_tokens",
         serde_json::to_value(&tokens).unwrap(),
     );

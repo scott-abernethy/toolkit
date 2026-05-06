@@ -287,6 +287,8 @@ enum DbrOp {
     },
     #[serde(rename = "auth/store_tokens")]
     AuthStoreTokens(tkdbr::oauth::TokenPair),
+    #[serde(rename = "auth/get_host")]
+    AuthGetHost,
 }
 
 async fn dispatch_dbr(req: Request) -> Response {
@@ -358,6 +360,14 @@ fn dispatch_dbr_sync(config: &tkdbr::ConnConfig, op: DbrOp) -> Response {
         }
         DbrOp::AuthStoreTokens(tokens) => {
             to_value_result(tkdbr::store_oauth_tokens(&config.conn_name, &tokens))
+        }
+        DbrOp::AuthGetHost => {
+            let host = config
+                .env
+                .get("DATABRICKS_HOST")
+                .cloned()
+                .unwrap_or_default();
+            Response::ok(serde_json::json!({ "host": host }))
         }
     }
 }
