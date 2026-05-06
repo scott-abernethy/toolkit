@@ -19,8 +19,13 @@ pub fn config_path() -> Result<PathBuf> {
 
 /// Load a named section from the shared config file and deserialize it into `T`.
 ///
-/// Each tool defines its own config struct and calls:
-///   `common::load_section::<MyConfig>("mytool")`
+/// **⚠ DAEMON-SIDE ONLY** — reads the config file directly from the filesystem.
+/// The config file is owned by `_toolkit` and is not readable by agent UIDs.
+/// Call this only from `toolkit-daemon` or from lib functions that are only
+/// ever invoked by the daemon's dispatch loop.
+///
+/// Client binaries (`main.rs`) must never call this. Instead, send a request
+/// to the daemon via `common::client::send` and let the daemon read config.
 pub fn load_section<T: DeserializeOwned>(section: &str) -> Result<T> {
     let path = config_path()?;
 
@@ -40,6 +45,8 @@ pub fn load_section<T: DeserializeOwned>(section: &str) -> Result<T> {
 
 /// Load a named connection from a config section.
 ///
+/// **⚠ DAEMON-SIDE ONLY** — see [`load_section`] for the access restriction.
+///
 /// If `conn` is None and exactly one connection is configured, that one is used.
 /// If `conn` is None and multiple connections exist, returns an error listing
 /// the available names.
@@ -47,8 +54,9 @@ pub fn load_named_section<T: DeserializeOwned>(section: &str, conn: Option<&str>
     load_named_section_with_name(section, conn).map(|(_, v)| v)
 }
 
-/// Like `load_named_section`, but also returns the connection name. Used by
-/// tools that need to thread the name through to a CLI flag (e.g. `--profile`).
+/// Like [`load_named_section`], but also returns the connection name.
+///
+/// **⚠ DAEMON-SIDE ONLY** — see [`load_section`] for the access restriction.
 pub fn load_named_section_with_name<T: DeserializeOwned>(
     section: &str,
     conn: Option<&str>,

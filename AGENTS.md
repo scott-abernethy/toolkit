@@ -199,6 +199,7 @@ daemon:
 - **Exit codes**: 0 on success, 1 on error
 - **Error output**: `{"error": "..."}` to stdout (not stderr) so agents can parse it
 - **Library purity**: lib functions never print, never read argv, never call `process::exit`. Side effects belong in binaries.
+- **Client binaries must never read config directly**: `common::load_section`, `load_named_section`, and each tool's `load_config` read the filesystem and are **daemon-side only** — the config file is owned by `_toolkit` and unreadable by agent UIDs. Client `main.rs` code must always go through the daemon socket (`common::client::send`). If a client subcommand needs data from config (e.g. a host URL), add a new daemon op that returns exactly what is needed.
 - **Dependencies**: prefer widely-used crates (`clap`, `serde`/`serde_json`, `tokio` where async is needed)
 
 Use `cargo fmt` and `cargo clippy` before committing.
