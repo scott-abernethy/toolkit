@@ -1,5 +1,5 @@
 use common::{Result, ToolkitError};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::io::Read;
@@ -37,6 +37,14 @@ pub struct ConnConfig {
     /// Connection name (not from config file — set by load_config)
     #[serde(skip)]
     pub conn_name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BundleContext {
+    pub command: String,
+    #[serde(default)]
+    pub env: HashMap<String, String>,
+    pub bundle_target: String,
 }
 
 fn default_databricks_command() -> String {
@@ -151,15 +159,37 @@ pub fn store_oauth_tokens(conn: &str, tokens: &crate::oauth::TokenPair) -> Resul
 /// When toolkit has a managed token (OAuth or PAT), it injects `DATABRICKS_TOKEN`
 /// and forces `DATABRICKS_AUTH_TYPE=pat` so the CLI uses the injected token rather
 /// than falling back to its own token cache (which may be empty or expired).
+fn build_env(config: &ConnConfig) -> Result<HashMap<String, String>> {
+    let mut env = config.env.clone();
+    env.insert(
+        "DATABRICKS_CONFIG_FILE".to_string(),
+        "/dev/null".to_string(),
+    );
+    if let Some(token) = get_effective_token(config)? {
+        env.insert("DATABRICKS_TOKEN".to_string(), token);
+        env.insert("DATABRICKS_AUTH_TYPE".to_string(), "pat".to_string());
+    }
+    Ok(env)
+}
+
 fn build_cmd(config: &ConnConfig) -> Result<Command> {
     let mut cmd = Command::new(&config.command);
-    cmd.envs(&config.env);
-    cmd.env("DATABRICKS_CONFIG_FILE", "/dev/null");
-    if let Some(token) = get_effective_token(config)? {
-        cmd.env("DATABRICKS_TOKEN", token);
-        cmd.env("DATABRICKS_AUTH_TYPE", "pat");
-    }
+    cmd.envs(build_env(config)?);
     Ok(cmd)
+}
+
+fn build_cmd_from_bundle(ctx: &BundleContext) -> Command {
+    let mut cmd = Command::new(&ctx.command);
+    cmd.envs(&ctx.env);
+    cmd
+}
+
+pub fn bundle_context(config: &ConnConfig) -> Result<BundleContext> {
+    Ok(BundleContext {
+        command: config.command.clone(),
+        env: build_env(config)?,
+        bundle_target: config.get_bundle_target(),
+    })
 }
 
 /// Spawn a subprocess with piped output, enforce `CLI_TIMEOUT`, and return
@@ -263,6 +293,32 @@ fn run_databricks_no_json(
     if !output.status.success() {
         let raw_msg = failure_msg(&output);
         common::errorlog::append(&format!("dbr/{}", ctx), &raw_msg);
+        return Err(sanitize_cli_error(&raw_msg));
+    }
+
+    Ok((
+        String::from_utf8_lossy(&output.stdout).to_string(),
+        String::from_utf8_lossy(&output.stderr).to_string(),
+    ))
+}
+
+fn run_bundle_no_json(
+    ctx: &BundleContext,
+    args: &[&str],
+    cwd: Option<&str>,
+) -> Result<(String, String)> {
+    let mut cmd = build_cmd_from_bundle(ctx);
+    if let Some(dir) = cwd {
+        cmd.current_dir(dir);
+    }
+    cmd.args(args);
+
+    let ctx_label = format!("bundle {:?}", args);
+    let output = spawn_with_timeout(cmd, &ctx_label)?;
+
+    if !output.status.success() {
+        let raw_msg = failure_msg(&output);
+        common::errorlog::append(&format!("dbr/{}", ctx_label), &raw_msg);
         return Err(sanitize_cli_error(&raw_msg));
     }
 
@@ -947,6 +1003,46 @@ pub fn bundle_run(
     }
 
     let (stdout, stderr) = run_databricks_no_json(config, &args, cwd)?;
+
+    // Extract run ID from output like "Run URL: https://...#job/JOB_ID/run/RUN_ID"
+    // Check both stdout and stderr as databricks CLI outputs to stderr
+    let output = if !stdout.is_empty() { &stdout } else { &stderr };
+    let run_id = output
+        .lines()
+        .find(|line| line.starts_with("Run URL:"))
+        .and_then(|line| line.split("/run/").last().map(|id| id.trim().to_string()));
+
+    if let Some(id) = run_id {
+        Ok(json!({"ok": true, "run_id": id}))
+    } else {
+        Ok(json!({"ok": true}))
+    }
+}
+
+pub fn bundle_validate_local(ctx: &BundleContext, cwd: Option<&str>) -> Result<Value> {
+    run_bundle_no_json(ctx, &["bundle", "validate", "-t", &ctx.bundle_target], cwd)?;
+    Ok(json!({"ok": true}))
+}
+
+pub fn bundle_deploy_local(ctx: &BundleContext, cwd: Option<&str>) -> Result<Value> {
+    run_bundle_no_json(ctx, &["bundle", "deploy", "-t", &ctx.bundle_target], cwd)?;
+    Ok(json!({"ok": true}))
+}
+
+pub fn bundle_run_local(
+    ctx: &BundleContext,
+    name: &str,
+    only: Option<&str>,
+    cwd: Option<&str>,
+) -> Result<Value> {
+    let mut args = vec!["bundle", "run", name, "-t", &ctx.bundle_target, "--no-wait"];
+
+    if let Some(only_val) = only {
+        args.push("--only");
+        args.push(only_val);
+    }
+
+    let (stdout, stderr) = run_bundle_no_json(ctx, &args, cwd)?;
 
     // Extract run ID from output like "Run URL: https://...#job/JOB_ID/run/RUN_ID"
     // Check both stdout and stderr as databricks CLI outputs to stderr

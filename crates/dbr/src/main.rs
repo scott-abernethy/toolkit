@@ -1,6 +1,6 @@
 use clap::{Parser, Subcommand};
 use common::protocol::Request;
-use common::{exit_with_error, Result};
+use common::{exit_with_error, Result, ToolkitError};
 use serde_json::{json, Value};
 
 #[derive(Parser)]
@@ -220,12 +220,6 @@ fn print_json(v: &Value) {
     println!("{}", serde_json::to_string(v).unwrap());
 }
 
-fn current_cwd_param() -> Option<String> {
-    std::env::current_dir()
-        .ok()
-        .map(|p| p.to_string_lossy().into_owned())
-}
-
 #[derive(Subcommand)]
 enum AuthCmd {
     /// Log in via browser (OAuth U2M PKCE). Tokens stored by the daemon.
@@ -365,14 +359,6 @@ fn command_to_request(conn: Option<String>, command: &Commands) -> Request {
                 json!({"catalog": catalog, "schema": schema, "table": table}),
             ),
         },
-        Commands::Bundle { cmd } => match cmd {
-            BundleCmd::Validate => ("bundle/validate", json!({"cwd": current_cwd_param()})),
-            BundleCmd::Deploy => ("bundle/deploy", json!({"cwd": current_cwd_param()})),
-            BundleCmd::Run { name, only } => (
-                "bundle/run",
-                json!({"name": name, "only": only, "cwd": current_cwd_param()}),
-            ),
-        },
         Commands::Query {
             sql,
             warehouse_id,
@@ -381,10 +367,34 @@ fn command_to_request(conn: Option<String>, command: &Commands) -> Request {
             "query",
             json!({"sql": sql, "warehouse_id": warehouse_id, "limit": limit}),
         ),
+        Commands::Bundle { .. } => unreachable!(),
         // Auth is handled before command_to_request is called (see run())
         Commands::Auth { .. } => unreachable!(),
     };
     Request::new("dbr", conn, op, params)
+}
+
+fn current_cwd() -> Result<String> {
+    std::env::current_dir()
+        .map(|p| p.to_string_lossy().into_owned())
+        .map_err(|e| ToolkitError::other(format!("failed to determine current directory: {e}")))
+}
+
+fn run_bundle_command(conn: Option<String>, cmd: &BundleCmd) -> Result<()> {
+    let req = Request::new("dbr", conn, "bundle/context", json!({}));
+    let value = common::client::send(&req)?;
+    let ctx: tkdbr::BundleContext = serde_json::from_value(value)
+        .map_err(|e| ToolkitError::other(format!("invalid bundle context from daemon: {e}")))?;
+    let cwd = current_cwd()?;
+    let result = match cmd {
+        BundleCmd::Validate => tkdbr::bundle_validate_local(&ctx, Some(&cwd)),
+        BundleCmd::Deploy => tkdbr::bundle_deploy_local(&ctx, Some(&cwd)),
+        BundleCmd::Run { name, only } => {
+            tkdbr::bundle_run_local(&ctx, name, only.as_deref(), Some(&cwd))
+        }
+    }?;
+    print_json(&result);
+    Ok(())
 }
 
 fn run() -> Result<()> {
@@ -395,6 +405,10 @@ fn run() -> Result<()> {
         return match cmd {
             AuthCmd::Login => cmd_auth_login(cli.conn.as_deref()),
         };
+    }
+
+    if let Commands::Bundle { cmd } = &cli.command {
+        return run_bundle_command(cli.conn.clone(), cmd);
     }
 
     let req = command_to_request(cli.conn, &cli.command);

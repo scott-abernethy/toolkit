@@ -111,6 +111,7 @@ tkdbr --conn prod warehouses list
 tkdbr --conn prod warehouses get --warehouse-id abc-123
 
 # Manage Databricks bundles (uses bundle_target from config, defaults to "local")
+# Bundle commands run in the caller's current directory so they can see the local bundle files.
 tkdbr --conn prod bundle validate
 tkdbr --conn prod bundle deploy
 tkdbr --conn prod bundle run my-job

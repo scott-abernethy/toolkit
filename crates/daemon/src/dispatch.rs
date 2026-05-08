@@ -293,6 +293,8 @@ enum DbrOp {
         #[serde(default)]
         cwd: Option<String>,
     },
+    #[serde(rename = "bundle/context")]
+    BundleContext,
     #[serde(rename = "auth/store_tokens")]
     AuthStoreTokens(tkdbr::oauth::TokenPair),
     #[serde(rename = "auth/get_host")]
@@ -373,6 +375,7 @@ fn dispatch_dbr_sync(config: &tkdbr::ConnConfig, op: DbrOp) -> Response {
             only.as_deref(),
             cwd.as_deref(),
         )),
+        DbrOp::BundleContext => to_value_result(tkdbr::bundle_context(config)),
         DbrOp::AuthStoreTokens(tokens) => {
             to_value_result(tkdbr::store_oauth_tokens(&config.conn_name, &tokens))
         }
@@ -545,6 +548,12 @@ mod tests {
             DbrOp::BundleDeploy { cwd } => assert!(cwd.is_none()),
             _ => panic!("expected BundleDeploy"),
         }
+    }
+
+    #[test]
+    fn dbr_bundle_context_parses() {
+        let op: DbrOp = parse_op("dbr", "bundle/context", &json!({})).unwrap();
+        assert!(matches!(op, DbrOp::BundleContext));
     }
 
     #[test]
