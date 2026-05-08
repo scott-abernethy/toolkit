@@ -50,8 +50,18 @@ pub fn send(req: &Request) -> Result<Value> {
     if resp.ok {
         Ok(resp.result.unwrap_or(Value::Null))
     } else {
-        Err(ToolkitError::other(
-            resp.error.unwrap_or_else(|| "daemon returned error".into()),
-        ))
+        let msg = resp.error.unwrap_or_else(|| "daemon returned error".into());
+        // Serde's "unknown variant" error means the daemon doesn't recognise an op
+        // that this client sent — the most common cause is a stale daemon after an
+        // upgrade. Surface a clear hint rather than the raw deserialisation noise.
+        let msg = if msg.contains("unknown variant") {
+            format!(
+                "client/daemon version mismatch — the daemon does not recognise this \
+                 operation. Upgrade and restart the daemon.\n\nDetail: {msg}"
+            )
+        } else {
+            msg
+        };
+        Err(ToolkitError::other(msg))
     }
 }
