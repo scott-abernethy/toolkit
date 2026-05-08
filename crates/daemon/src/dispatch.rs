@@ -276,14 +276,22 @@ enum DbrOp {
         limit: u32,
     },
     #[serde(rename = "bundle/validate")]
-    BundleValidate,
+    BundleValidate {
+        #[serde(default)]
+        cwd: Option<String>,
+    },
     #[serde(rename = "bundle/deploy")]
-    BundleDeploy,
+    BundleDeploy {
+        #[serde(default)]
+        cwd: Option<String>,
+    },
     #[serde(rename = "bundle/run")]
     BundleRun {
         name: String,
         #[serde(default)]
         only: Option<String>,
+        #[serde(default)]
+        cwd: Option<String>,
     },
     #[serde(rename = "auth/store_tokens")]
     AuthStoreTokens(tkdbr::oauth::TokenPair),
@@ -353,11 +361,18 @@ fn dispatch_dbr_sync(config: &tkdbr::ConnConfig, op: DbrOp) -> Response {
             warehouse_id,
             limit,
         } => to_value_result(tkdbr::query(config, &sql, warehouse_id.as_deref(), limit)),
-        DbrOp::BundleValidate => to_value_result(tkdbr::bundle_validate(config)),
-        DbrOp::BundleDeploy => to_value_result(tkdbr::bundle_deploy(config)),
-        DbrOp::BundleRun { name, only } => {
-            to_value_result(tkdbr::bundle_run(config, &name, only.as_deref()))
+        DbrOp::BundleValidate { cwd } => {
+            to_value_result(tkdbr::bundle_validate(config, cwd.as_deref()))
         }
+        DbrOp::BundleDeploy { cwd } => {
+            to_value_result(tkdbr::bundle_deploy(config, cwd.as_deref()))
+        }
+        DbrOp::BundleRun { name, only, cwd } => to_value_result(tkdbr::bundle_run(
+            config,
+            &name,
+            only.as_deref(),
+            cwd.as_deref(),
+        )),
         DbrOp::AuthStoreTokens(tokens) => {
             to_value_result(tkdbr::store_oauth_tokens(&config.conn_name, &tokens))
         }
@@ -503,6 +518,33 @@ mod tests {
     fn dbr_unit_variant_op_parses() {
         let op: DbrOp = parse_op("dbr", "clusters/list", &json!({})).unwrap();
         assert!(matches!(op, DbrOp::ClustersList));
+    }
+
+    #[test]
+    fn dbr_bundle_run_with_cwd_parses() {
+        let op: DbrOp = parse_op(
+            "dbr",
+            "bundle/run",
+            &json!({"name": "data_migration_refresh", "cwd": "/tmp"}),
+        )
+        .unwrap();
+        match op {
+            DbrOp::BundleRun { name, only, cwd } => {
+                assert_eq!(name, "data_migration_refresh");
+                assert!(only.is_none());
+                assert_eq!(cwd.as_deref(), Some("/tmp"));
+            }
+            _ => panic!("expected BundleRun"),
+        }
+    }
+
+    #[test]
+    fn dbr_bundle_deploy_without_cwd_defaults_to_none() {
+        let op: DbrOp = parse_op("dbr", "bundle/deploy", &json!({})).unwrap();
+        match op {
+            DbrOp::BundleDeploy { cwd } => assert!(cwd.is_none()),
+            _ => panic!("expected BundleDeploy"),
+        }
     }
 
     #[test]

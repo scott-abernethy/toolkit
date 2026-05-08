@@ -246,8 +246,15 @@ fn run_databricks(config: &ConnConfig, args: &[&str]) -> Result<Value> {
 
 /// Run a databricks command that doesn't produce JSON output (e.g. bundle commands).
 /// Returns (stdout, stderr) if successful.
-fn run_databricks_no_json(config: &ConnConfig, args: &[&str]) -> Result<(String, String)> {
+fn run_databricks_no_json(
+    config: &ConnConfig,
+    args: &[&str],
+    cwd: Option<&str>,
+) -> Result<(String, String)> {
     let mut cmd = build_cmd(config)?;
+    if let Some(dir) = cwd {
+        cmd.current_dir(dir);
+    }
     cmd.args(args);
 
     let ctx = format!("{} {:?}", config.conn_name, args);
@@ -913,19 +920,24 @@ fn build_query_result(raw: &Value) -> Result<Value> {
 // Bundles
 // ---------------------------------------------------------------------------
 
-pub fn bundle_validate(config: &ConnConfig) -> Result<Value> {
+pub fn bundle_validate(config: &ConnConfig, cwd: Option<&str>) -> Result<Value> {
     let target = config.get_bundle_target();
-    run_databricks_no_json(config, &["bundle", "validate", "-t", &target])?;
+    run_databricks_no_json(config, &["bundle", "validate", "-t", &target], cwd)?;
     Ok(json!({"ok": true}))
 }
 
-pub fn bundle_deploy(config: &ConnConfig) -> Result<Value> {
+pub fn bundle_deploy(config: &ConnConfig, cwd: Option<&str>) -> Result<Value> {
     let target = config.get_bundle_target();
-    run_databricks_no_json(config, &["bundle", "deploy", "-t", &target])?;
+    run_databricks_no_json(config, &["bundle", "deploy", "-t", &target], cwd)?;
     Ok(json!({"ok": true}))
 }
 
-pub fn bundle_run(config: &ConnConfig, name: &str, only: Option<&str>) -> Result<Value> {
+pub fn bundle_run(
+    config: &ConnConfig,
+    name: &str,
+    only: Option<&str>,
+    cwd: Option<&str>,
+) -> Result<Value> {
     let target = config.get_bundle_target();
     let mut args = vec!["bundle", "run", name, "-t", &target, "--no-wait"];
 
@@ -934,7 +946,7 @@ pub fn bundle_run(config: &ConnConfig, name: &str, only: Option<&str>) -> Result
         args.push(only_val);
     }
 
-    let (stdout, stderr) = run_databricks_no_json(config, &args)?;
+    let (stdout, stderr) = run_databricks_no_json(config, &args, cwd)?;
 
     // Extract run ID from output like "Run URL: https://...#job/JOB_ID/run/RUN_ID"
     // Check both stdout and stderr as databricks CLI outputs to stderr

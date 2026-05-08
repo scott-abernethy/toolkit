@@ -220,6 +220,12 @@ fn print_json(v: &Value) {
     println!("{}", serde_json::to_string(v).unwrap());
 }
 
+fn current_cwd_param() -> Option<String> {
+    std::env::current_dir()
+        .ok()
+        .map(|p| p.to_string_lossy().into_owned())
+}
+
 #[derive(Subcommand)]
 enum AuthCmd {
     /// Log in via browser (OAuth U2M PKCE). Tokens stored by the daemon.
@@ -360,9 +366,12 @@ fn command_to_request(conn: Option<String>, command: &Commands) -> Request {
             ),
         },
         Commands::Bundle { cmd } => match cmd {
-            BundleCmd::Validate => ("bundle/validate", json!({})),
-            BundleCmd::Deploy => ("bundle/deploy", json!({})),
-            BundleCmd::Run { name, only } => ("bundle/run", json!({"name": name, "only": only})),
+            BundleCmd::Validate => ("bundle/validate", json!({"cwd": current_cwd_param()})),
+            BundleCmd::Deploy => ("bundle/deploy", json!({"cwd": current_cwd_param()})),
+            BundleCmd::Run { name, only } => (
+                "bundle/run",
+                json!({"name": name, "only": only, "cwd": current_cwd_param()}),
+            ),
         },
         Commands::Query {
             sql,
