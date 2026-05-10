@@ -183,6 +183,7 @@ See [docs/hooks.md](docs/hooks.md) for full instructions, coverage details, and 
 ## Daemon Setup
 
 `toolkit-daemon` runs as a dedicated `_toolkit` system user that owns the config. CLI tools connect to it over a UNIX socket; the daemon checks the peer UID, reads the config that the agent UID can't see, and dispatches the call.
+Its full error log lives under `/var/lib/toolkit/.local/share/toolkit/errors.log`; use `toolkit logs` to read or follow it with sudo.
 
 ```sh
 # After setup (see docs/daemon.md):

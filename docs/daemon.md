@@ -8,6 +8,22 @@ All toolkit operations route through the daemon — native clients (`tkpsql`, `t
 `tkdbr`) send requests directly, and `toolkit guard` fetches config from the daemon
 before executing wrapped CLIs locally.
 
+Full daemon-side error logs are written to:
+
+```sh
+/var/lib/toolkit/.local/share/toolkit/errors.log
+```
+
+Read or follow them with:
+
+```sh
+toolkit logs
+toolkit logs --tail 200
+toolkit logs --follow
+```
+
+`toolkit logs` runs through `sudo`, so access is still gated by local authentication.
+
 ## Threat model
 
 | What the daemon protects against |

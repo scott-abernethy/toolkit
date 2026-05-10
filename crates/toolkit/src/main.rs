@@ -47,6 +47,16 @@ enum Commands {
     },
     /// Show daemon status: socket path and reachability
     Status,
+    /// Read the daemon-owned error log (requires sudo)
+    Logs {
+        /// Number of trailing lines to show
+        #[arg(long, default_value_t = 100)]
+        tail: u32,
+
+        /// Follow the log as it grows
+        #[arg(long)]
+        follow: bool,
+    },
     /// Generate guarded wrapper scripts
     Install,
     /// Run a CLI through the toolkit guard (used by generated wrapper scripts)
@@ -103,7 +113,7 @@ fn run() -> Result<i32> {
     };
 
     // Guard is invoked by generated wrapper scripts in agent context — allow it.
-    // All other commands (config, install, status) must be blocked for agents.
+    // All other commands (config, install, status, logs) must be blocked for agents.
     if !matches!(cli.command, Commands::Guard { .. }) {
         reject_if_agent();
     }
@@ -118,6 +128,10 @@ fn run() -> Result<i32> {
         }
         Commands::Status => {
             cmd_status()?;
+            Ok(0)
+        }
+        Commands::Logs { tail, follow } => {
+            cmd_logs(tail, follow)?;
             Ok(0)
         }
         Commands::Install => {
@@ -300,6 +314,33 @@ fn cmd_status() -> Result<()> {
         }
     }
     println!("{out}");
+    Ok(())
+}
+
+fn cmd_logs(tail: u32, follow: bool) -> Result<()> {
+    let path = common::errorlog::path();
+    let tail_arg = tail.to_string();
+
+    let mut cmd = process::Command::new("sudo");
+    cmd.args(["-u", DAEMON_USER, "tail", "-n"]).arg(&tail_arg);
+    if follow {
+        cmd.arg("-F");
+    }
+    cmd.arg(&path);
+
+    let status = cmd
+        .status()
+        .map_err(|e| ToolkitError::other(format!("failed to run sudo: {e}")))?;
+    if !status.success() {
+        let code = status
+            .code()
+            .map(|c| c.to_string())
+            .unwrap_or_else(|| "signal".to_string());
+        return Err(ToolkitError::other(format!(
+            "failed to read daemon logs from {} (exit {code})",
+            path.display()
+        )));
+    }
     Ok(())
 }
 
