@@ -252,7 +252,7 @@ checksum = "1d07550c9036bf2ae0c684c4297d503f838287c83c53686d05370d0e139ae570"
 
 [[package]]
 name = "common"
-version = "0.1.0"
+version = "0.4.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -1662,7 +1662,7 @@ checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
 
 [[package]]
 name = "tkdbr"
-version = "0.1.0"
+version = "0.4.0"
 dependencies = [
  "base64 0.22.1",
  "clap",
@@ -1677,7 +1677,7 @@ dependencies = [
 
 [[package]]
 name = "tkmsql"
-version = "0.1.0"
+version = "0.4.0"
 dependencies = [
  "chrono",
  "clap",
@@ -1693,7 +1693,7 @@ dependencies = [
 
 [[package]]
 name = "tkpsql"
-version = "0.1.0"
+version = "0.4.0"
 dependencies = [
  "chrono",
  "clap",
@@ -1794,7 +1794,7 @@ dependencies = [
 
 [[package]]
 name = "toolkit"
-version = "0.1.0"
+version = "0.4.0"
 dependencies = [
  "clap",
  "common",
@@ -1806,7 +1806,7 @@ dependencies = [
 
 [[package]]
 name = "toolkit-daemon"
-version = "0.1.0"
+version = "0.4.0"
 dependencies = [
  "common",
  "libc",
