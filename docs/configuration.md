@@ -89,20 +89,44 @@ dbr:
     allow_job_runs: false                # permit jobs trigger (default: false)
     bundle_target: dev                   # bundle target (default: "local")
 
-  # OAuth browser flow (no token required — run `tkdbr auth login` to authenticate)
-  prod:
+## toolkit guard
+
+The guard wraps any CLI with credential injection and command rules. Connections for guarded apps must include a `command` field.
+
+```yaml
+kubectl:
+  dev:
+    command: kubectl
+    install_path: "$HOME/.local/bin"   # optional override
     env:
-      DATABRICKS_HOST: https://dbc-def456.cloud.databricks.com
-      DATABRICKS_AUTH_TYPE: external-browser
-      DATABRICKS_ACCOUNT_ID: 00000000-0000-0000-0000-000000000000
-      DATABRICKS_WAREHOUSE_ID: abc123def456
-    allow_job_runs: false
-    bundle_target: prod
+      KUBECONFIG: /path/to/dev.kubeconfig
+    allow:
+      - "get pod|pods"
+      - "get deploy|deployment|deployments"
+      - "describe pod|pods"
+      - "logs"
+    deny:
+      - "secret|secrets"
+      - "exec"
+      - "delete"
+      - "--kubeconfig"
+
+  prod:
+    command: kubectl
+    env:
+      KUBECONFIG: /path/to/prod.kubeconfig
+    allow:
+      - "get pod|pods"
+    deny:
+      - "delete"
 ```
+
+After adding a guard connection, run `toolkit install` to generate the wrapper scripts (e.g. `tkkubectl-dev`).
 
 ## daemon
 
-`toolkit-daemon` reads a `daemon:` section from its config. See [docs/daemon.md](daemon.md) for full setup.
+
+`toolkit-daemon` reads a `daemon:` section from its config. See [docs/daemon.md](daemon.md) for full setup instructions for the daemon transport.
 
 ```yaml
 daemon:

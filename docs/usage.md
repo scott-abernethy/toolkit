@@ -58,6 +58,30 @@ Output is compact JSON, same format as `tkpsql`:
 {"rows":[{"id":1,"name":"Alice"},{"id":2,"name":"Bob"}],"count":2}
 ```
 
+## toolkit (Daemon Management)
+
+The `toolkit` binary provides commands for managing the daemon and installing wrappers. These commands are blocked for AI agents.
+
+```sh
+# Show daemon status (socket path and reachability)
+toolkit status
+
+# Open the daemon config in $EDITOR (requires sudo)
+toolkit config edit
+
+# Show masked config (requires sudo)
+toolkit config show
+
+# Show config template for an app
+toolkit config template psql
+
+# Read or follow daemon error logs (requires sudo)
+toolkit logs [--tail 50] [--follow]
+
+# Generate guarded wrapper scripts (e.g. tkkubectl-dev)
+toolkit install
+```
+
 ## tkdbr
 
 ```sh
