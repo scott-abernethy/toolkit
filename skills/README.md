@@ -7,29 +7,56 @@ This repo contains two types of AI agent configuration:
 
 ## Setup
 
-After cloning the toolkit repository:
+Before setting up skills, ensure the toolkit CLI tools are installed:
 
 ```bash
-# 1. Install the CLI tools (required for tool skills only)
+# Option 1: Install via Homebrew (recommended)
+brew tap scott-abernethy/tap
+brew install scott-abernethy/tap/toolkit
+sudo $(brew --prefix)/opt/toolkit/libexec/setup-daemon.sh
+
+# Option 2: Build from source (development)
 cd ~/path/to/toolkit
 just install
+```
 
-# 2. Link all skills to opencode
+Then link skills to your agent platforms:
+
+```bash
 cd ~/path/to/toolkit
+
+# Link all skills to opencode
 mkdir -p ~/.config/opencode/skills
 for skill in skills/*/; do
   skill_name=$(basename "$skill")
   ln -s "$(pwd)/$skill" ~/.config/opencode/skills/"$skill_name"
+done
+
+# Link all skills to Copilot CLI (optional)
+mkdir -p ~/.copilot/skills
+for skill in skills/*/; do
+  skill_name=$(basename "$skill")
+  ln -s "$(pwd)/$skill" ~/.copilot/skills/"$skill_name"
 done
 ```
 
 To update existing symlinks (if you're re-running setup), use `-sf`:
 
 ```bash
+cd ~/path/to/toolkit
+
+# Update opencode skills
 mkdir -p ~/.config/opencode/skills
 for skill in skills/*/; do
   skill_name=$(basename "$skill")
   ln -sf "$(pwd)/$skill" ~/.config/opencode/skills/"$skill_name"
+done
+
+# Update Copilot CLI skills
+mkdir -p ~/.copilot/skills
+for skill in skills/*/; do
+  skill_name=$(basename "$skill")
+  ln -sf "$(pwd)/$skill" ~/.copilot/skills/"$skill_name"
 done
 ```
 
@@ -49,7 +76,11 @@ These skills encode team conventions and processes. No installation beyond symli
 
 ## How it works
 
-Opencode loads skill definitions from `~/.config/opencode/skills/`. Each skill has a `SKILL.md` file that specifies:
+Skills are loaded by AI agents from designated skill directories:
+- **opencode** loads skills from `~/.config/opencode/skills/`
+- **Copilot CLI** loads skills from `~/.copilot/skills/`
+
+Each skill has a `SKILL.md` file that specifies:
 
 1. **What the tool does** — brief description
 2. **When to use it** — trigger phrases and use cases
@@ -64,12 +95,22 @@ When you ask the agent a question, it searches your installed skills and automat
 **Tool skill** (wraps a CLI tool):
 1. Create a directory: `skills/<tool_name>/`
 2. Add a `SKILL.md` file (follow the pattern in `tkpsql/SKILL.md`)
-3. Link it: `mkdir -p ~/.config/opencode/skills && ln -s $(pwd)/skills/<tool_name> ~/.config/opencode/skills/<tool_name>`
+3. Link it to both opencode and Copilot:
+   ```bash
+   mkdir -p ~/.config/opencode/skills ~/.copilot/skills
+   ln -s $(pwd)/skills/<tool_name> ~/.config/opencode/skills/<tool_name>
+   ln -s $(pwd)/skills/<tool_name> ~/.copilot/skills/<tool_name>
+   ```
 
 **Workflow skill** (team convention):
 1. Create a directory: `skills/<skill_name>/`
 2. Add a `SKILL.md` describing the convention/process the agent should follow
-3. Link it: `mkdir -p ~/.config/opencode/skills && ln -s $(pwd)/skills/<skill_name> ~/.config/opencode/skills/<skill_name>`
+3. Link it to both opencode and Copilot:
+   ```bash
+   mkdir -p ~/.config/opencode/skills ~/.copilot/skills
+   ln -s $(pwd)/skills/<skill_name> ~/.config/opencode/skills/<skill_name>
+   ln -s $(pwd)/skills/<skill_name> ~/.copilot/skills/<skill_name>
+   ```
 
 ## Environment Setup
 
@@ -107,6 +148,11 @@ bundle_target = "dev"
 - Ensure the symlink is in `~/.config/opencode/skills/`
 - Check that `SKILL.md` exists and has valid frontmatter
 - Reload opencode config: restart the editor or run the refresh command
+
+**Skill not showing up in Copilot CLI:**
+- Ensure the symlink is in `~/.copilot/skills/`
+- Check that `SKILL.md` exists and has valid frontmatter
+- Restart Copilot CLI or reload configuration
 
 **Tool not found when agent tries to use it:**
 - Ensure `just install` was run: `tkpsql --help` should work in terminal
