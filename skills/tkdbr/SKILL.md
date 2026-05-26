@@ -30,65 +30,85 @@ Do **not** use for:
 
 ## Usage
 
-### Query Tables
+## Connections
+
+When multiple connections are configured (e.g. `dev`, `tst`, `prod`), pass `--conn <conn>` to every command.
+The flag is `--conn`, NOT `--profile`.
 
 ```bash
-# Run a SQL query (uses warehouse_id from config)
-tkdbr query --sql "SELECT * FROM my_catalog.my_schema.my_table"
+# Select a named connection
+tkdbr query --conn <conn> --sql "..."
+tkdbr catalogs list --conn <conn>
+tkdbr schemas list --conn <conn> --catalog my_catalog
+```
+
+If only one connection is configured, `--conn` can be omitted.
+
+### Query Tables
+
+SQL table references **must be fully qualified** as `<catalog>.<schema>.<table>`.
+Schema-only names like `my_schema.my_table` will fail. Always discover the real catalog name first
+(see "Explore Unity Catalog" below) unless you already know it.
+
+```bash
+# Run a SQL query — always use fully-qualified three-part names
+tkdbr query --conn <conn> --sql "SELECT * FROM my_catalog.my_schema.my_table LIMIT 5"
 
 # With explicit warehouse and row limit
-tkdbr query --sql "SELECT id, name FROM catalog.schema.table WHERE status = 'active'" --warehouse-id 9f9919ede4d8f98d --limit 50
+tkdbr query --conn dev --sql "SELECT id, name FROM my_catalog.my_schema.my_table WHERE status = 'active'" --warehouse-id 9f9919ede4d8f98d --limit 50
 
 # Find your warehouse_id
-tkdbr warehouses list
+tkdbr warehouses list --conn <conn>
 ```
 
 ### Explore Unity Catalog
 
+When the catalog name is unknown, list catalogs first to find the correct name before querying.
+
 ```bash
-# List catalogs
-tkdbr catalogs list [--limit 100]
-tkdbr catalogs get --catalog my_catalog
+# 1. Discover catalogs (do this first when catalog name is unknown)
+tkdbr catalogs list --conn <conn>
+tkdbr catalogs get --conn <conn> --catalog my_catalog
 
-# List schemas in a catalog
-tkdbr schemas list --catalog my_catalog [--limit 100]
-tkdbr schemas get --catalog my_catalog --schema analytics
+# 2. List schemas in a catalog
+tkdbr schemas list --conn <conn> --catalog my_catalog [--limit 100]
+tkdbr schemas get --conn <conn> --catalog my_catalog --schema my_schema
 
-# List tables in a schema
-tkdbr tables list --catalog my_catalog --schema analytics [--limit 100]
+# 3. List tables in a schema
+tkdbr tables list --conn <conn> --catalog my_catalog --schema my_schema [--limit 100]
 
 # Get full table schema (columns, data types, descriptions)
-tkdbr tables get --catalog my_catalog --schema analytics --table fact_orders
+tkdbr tables get --conn <conn> --catalog my_catalog --schema my_schema --table my_table
 
 # Omit column definitions for lighter responses
-tkdbr tables list --catalog my_catalog --schema analytics --omit-columns
+tkdbr tables list --conn <conn> --catalog my_catalog --schema my_schema --omit-columns
 ```
 
 ### Query Jobs and Runs
 
 ```bash
 # List all jobs
-tkdbr jobs list [--limit 25]
-tkdbr jobs get --job-id 123
+tkdbr jobs list --conn <conn> [--limit 25]
+tkdbr jobs get --conn <conn> --job-id 123
 
 # List recent runs for a job
-tkdbr runs list --job-id 123 [--limit 10]
-tkdbr runs get --run-id 456
-tkdbr runs output --run-id 456
+tkdbr runs list --conn <conn> --job-id 123 [--limit 10]
+tkdbr runs get --conn <conn> --run-id 456
+tkdbr runs output --conn <conn> --run-id 456
 
 # Trigger a job run
-tkdbr jobs trigger --job-id 123
+tkdbr jobs trigger --conn <conn> --job-id 123
 ```
 
 ### Inspect Clusters and Warehouses
 
 ```bash
 # List clusters
-tkdbr clusters list
-tkdbr clusters get --cluster-id abc-123
+tkdbr clusters list --conn <conn>
+tkdbr clusters get --conn <conn> --cluster-id abc-123
 
 # List SQL warehouses
-tkdbr warehouses list
+tkdbr warehouses list --conn <conn>
 ```
 
 ### Manage Databricks Bundles
@@ -97,13 +117,13 @@ Bundles are deployed workflows defined in YAML. The bundle target (e.g., `local`
 
 ```bash
 # Validate the bundle (checks YAML syntax and references)
-tkdbr bundle validate
+tkdbr bundle validate --conn <conn>
 
 # Deploy the bundle to the configured target
-tkdbr bundle deploy
+tkdbr bundle deploy --conn <conn>
 
 # Run a named resource from the bundle
-tkdbr bundle run my-job
+tkdbr bundle run my-job --conn <conn>
 ```
 
 ## Output Format
