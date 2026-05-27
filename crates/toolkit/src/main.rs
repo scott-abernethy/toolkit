@@ -1,4 +1,6 @@
 mod guard;
+mod init;
+mod validate;
 
 use clap::{Parser, Subcommand};
 use common::{client, exit_with_error, Result, ToolkitError};
@@ -16,6 +18,9 @@ const DEFAULT_AGENT_ENV_VARS: &[&str] = &[
     "OPENCODE",        // opencode (sst/opencode)
     "COPILOT_CLI",     // GitHub Copilot CLI
     "COPILOT_RUN_APP", // GitHub Copilot CLI (run app context)
+    "CURSOR_AGENT",    // Cursor
+    "CURSOR_TRACE_ID", // Cursor (trace context)
+    "CODEX_THREAD_ID", // Codex CLI
 ];
 
 fn not_permitted() -> ! {
@@ -57,6 +62,17 @@ enum Commands {
         #[arg(long)]
         follow: bool,
     },
+    /// Bootstrap harness protections (hooks and deny rules)
+    Init {
+        /// Harness to configure
+        #[arg(long, default_value = "all")]
+        harness: init::InitHarness,
+        /// Global/user config or repository-local config
+        #[arg(long, default_value = "global")]
+        scope: init::InitScope,
+    },
+    /// Validate daemon and harness integration setup
+    Validate,
     /// Generate guarded wrapper scripts
     Install,
     /// Run a CLI through the toolkit guard (used by generated wrapper scripts)
@@ -113,7 +129,7 @@ fn run() -> Result<i32> {
     };
 
     // Guard is invoked by generated wrapper scripts in agent context — allow it.
-    // All other commands (config, install, status, logs) must be blocked for agents.
+    // All other commands must be blocked for agents.
     if !matches!(cli.command, Commands::Guard { .. }) {
         reject_if_agent();
     }
@@ -134,6 +150,11 @@ fn run() -> Result<i32> {
             cmd_logs(tail, follow)?;
             Ok(0)
         }
+        Commands::Init { harness, scope } => {
+            init::run(harness, scope)?;
+            Ok(0)
+        }
+        Commands::Validate => validate::run(),
         Commands::Install => {
             cmd_install()?;
             Ok(0)
@@ -424,4 +445,76 @@ msql:
     println!("# Add to daemon config via `toolkit config edit`:");
     print!("{}", template);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    static ENV_MUTEX: Mutex<()> = Mutex::new(());
+
+    fn with_only_var<F: FnOnce() -> bool>(var: &str, f: F) -> bool {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let saved: Vec<Option<String>> = DEFAULT_AGENT_ENV_VARS
+            .iter()
+            .map(|v| std::env::var(v).ok())
+            .collect();
+        for v in DEFAULT_AGENT_ENV_VARS {
+            std::env::remove_var(v);
+        }
+        std::env::set_var(var, "1");
+        let result = f();
+        for (v, val) in DEFAULT_AGENT_ENV_VARS.iter().zip(saved.iter()) {
+            match val {
+                Some(s) => std::env::set_var(v, s),
+                None => std::env::remove_var(v),
+            }
+        }
+        result
+    }
+
+    fn with_no_vars<F: FnOnce() -> bool>(f: F) -> bool {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let saved: Vec<Option<String>> = DEFAULT_AGENT_ENV_VARS
+            .iter()
+            .map(|v| std::env::var(v).ok())
+            .collect();
+        for v in DEFAULT_AGENT_ENV_VARS {
+            std::env::remove_var(v);
+        }
+        let result = f();
+        for (v, val) in DEFAULT_AGENT_ENV_VARS.iter().zip(saved.iter()) {
+            match val {
+                Some(s) => std::env::set_var(v, s),
+                None => std::env::remove_var(v),
+            }
+        }
+        result
+    }
+
+    #[test]
+    fn agent_detection_false_when_no_harness_vars_set() {
+        assert!(!with_no_vars(is_agent));
+    }
+
+    #[test]
+    fn agent_detection_copilot_cli() {
+        assert!(with_only_var("COPILOT_CLI", is_agent));
+    }
+
+    #[test]
+    fn agent_detection_cursor_agent() {
+        assert!(with_only_var("CURSOR_AGENT", is_agent));
+    }
+
+    #[test]
+    fn agent_detection_cursor_trace_id() {
+        assert!(with_only_var("CURSOR_TRACE_ID", is_agent));
+    }
+
+    #[test]
+    fn agent_detection_codex_thread_id() {
+        assert!(with_only_var("CODEX_THREAD_ID", is_agent));
+    }
 }

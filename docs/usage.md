@@ -66,6 +66,12 @@ The `toolkit` binary provides commands for managing the daemon and installing wr
 # Show daemon status (socket path and reachability)
 toolkit status
 
+# Bootstrap harness protections (hooks/deny rules)
+toolkit init --harness all --scope global
+
+# Validate daemon + harness integration
+toolkit validate
+
 # Open the daemon config in $EDITOR (requires sudo)
 toolkit config edit
 

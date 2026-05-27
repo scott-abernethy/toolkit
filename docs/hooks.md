@@ -11,6 +11,25 @@ Toolkit's built-in protections stop agents from running `toolkit config show` or
 
 Harness hooks address these gaps by blocking specific operations before they reach the filesystem.
 
+## Quick setup
+
+Use `toolkit init` to install hook scripts and merge harness settings idempotently:
+
+```sh
+# Configure Claude Code, opencode, and Copilot guidance in global/user scope
+toolkit init --harness all --scope global
+
+# Or configure only one harness
+toolkit init --harness claude-code --scope global
+toolkit init --harness opencode --scope global
+toolkit init --harness copilot-cli --scope project
+
+# Validate setup
+toolkit validate
+```
+
+`toolkit init` is safe to re-run; it only applies missing or drifted settings.
+
 ## Scope and limitations
 
 These recipes are **defence-in-depth**, not a sandbox:
@@ -42,7 +61,7 @@ The structural fix for a hostile agent is running the agent under a separate UID
 | `~/.docker/config.json` | Docker registry auth |
 | `.env`, `.env.*` | Project env files (excluding `.env.example`) |
 
-## Claude Code
+## Claude Code (manual)
 
 ### Prerequisites
 
@@ -90,7 +109,7 @@ Note: if you already have `permissions.deny` entries or `hooks.PreToolUse` entri
 
 The `_comment` key in the snippet is not a Claude Code feature; remove it after merging.
 
-## opencode
+## opencode (manual)
 
 opencode's permission system provides granular per-tool allow/deny rules in `~/.config/opencode/opencode.json`.
 
@@ -137,7 +156,7 @@ jq -s '.[0] * {"permission": (.[0].permission + .[1].permission)}' \
 mv /tmp/merged.json ~/.config/opencode/opencode.json
 ```
 
-## GitHub Copilot CLI
+## GitHub Copilot CLI (manual)
 
 GitHub Copilot CLI does not expose a per-command deny list in `~/.copilot/settings.json`.
 

@@ -33,6 +33,8 @@ Toolkit addresses two distinct surfaces:
 
 Toolkit is meaningful as one layer in that stack — not as a substitute for any of the others.
 
+For the full attacker model, bypass matrix, and deployment guidance, see [docs/threat-model.md](docs/threat-model.md).
+
 ## What Toolkit Does
 
 Toolkit is a safety kit that sits between AI agents and upstream services. Each tool in the kit:
@@ -103,7 +105,8 @@ See [skills/README.md](skills/README.md) for setup details.
 Harness-level hooks are a required layer alongside toolkit's own controls. The `hooks/` directory provides recipes for Claude Code and opencode that block direct file reads of credentials and management commands.
 
 ```sh
-just install-hooks
+toolkit init --harness all --scope global
+toolkit validate
 ```
 
 See [docs/hooks.md](docs/hooks.md) for full instructions.
@@ -113,6 +116,7 @@ See [docs/hooks.md](docs/hooks.md) for full instructions.
 - [Usage examples](docs/usage.md) — detailed command reference
 - [Configuration](docs/configuration.md) — config file format
 - [Daemon transport](docs/daemon.md) — separate-UID setup and security
+- [Threat model](docs/threat-model.md) — attacker model, limitations, and layered controls
 - [Harness hooks](docs/hooks.md) — Claude / opencode / Copilot CLI recipes
 - [Contributing](docs/contributing.md) — development commands and prerequisites
 - [Contributor Guide](AGENTS.md) — architecture, output philosophy, and agent conventions

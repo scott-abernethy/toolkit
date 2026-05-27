@@ -25,6 +25,13 @@ just install-hooks
 
 This copies `bash-guard` and `read-guard` to `~/.config/toolkit/hooks/`.
 
+> Prefer `toolkit init` for idempotent setup and validation:
+>
+> ```sh
+> toolkit init --harness all --scope global
+> toolkit validate
+> ```
+
 ### 2. Apply harness configuration
 
 **Claude Code** — merge `claude-code/settings.snippet.json` into `~/.claude/settings.json`:

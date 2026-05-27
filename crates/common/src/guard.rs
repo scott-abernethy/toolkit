@@ -325,6 +325,52 @@ mod tests {
         assert_eq!(config.command, "beta");
     }
 
+    /// Guard rule evaluation should stay fast because every wrapped command
+    /// goes through this path before execution.
+    #[test]
+    fn test_check_rules_latency_budget() {
+        use std::time::Instant;
+
+        const ITERATIONS: usize = 5_000;
+        #[cfg(not(debug_assertions))]
+        const TARGET_US: f64 = 150.0;
+
+        let config = ConnConfig {
+            command: "test".into(),
+            env: HashMap::new(),
+            allow: vec![
+                "get pod|pods".into(),
+                "get deploy|deployment|deployments".into(),
+                "describe pod|pods".into(),
+                "logs".into(),
+            ],
+            deny: vec![
+                "secret|secrets".into(),
+                "delete".into(),
+                "exec".into(),
+                "--kubeconfig".into(),
+                "--as".into(),
+            ],
+        };
+
+        // Warmup avoids counting one-time branch predictor/cache effects.
+        let _ = check_rules(&config, &["get", "pods", "-o", "json"]);
+
+        let start = Instant::now();
+        for _ in 0..ITERATIONS {
+            assert!(check_rules(&config, &["get", "pods", "-o", "json"]).is_ok());
+        }
+        let elapsed = start.elapsed();
+        let avg_us = (elapsed.as_secs_f64() * 1_000_000.0) / ITERATIONS as f64;
+        println!("\ncheck_rules average latency: {avg_us:.2}us ({ITERATIONS} iterations)");
+
+        #[cfg(not(debug_assertions))]
+        assert!(
+            avg_us < TARGET_US,
+            "average latency {avg_us:.2}us exceeds {TARGET_US}us target"
+        );
+    }
+
     /// Mutex to serialise tests that read/write process-global env vars.
     static ENV_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
 }

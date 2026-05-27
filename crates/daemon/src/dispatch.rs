@@ -626,4 +626,33 @@ mod tests {
         assert!(!resp.ok);
         assert_eq!(resp.error_class, Some("invalid_request"));
     }
+
+    /// Dispatch overhead for local/meta operations should remain small so
+    /// daemon-side validation doesn't become noticeable.
+    #[tokio::test]
+    async fn meta_dispatch_latency_budget() {
+        use std::time::Instant;
+
+        const ITERATIONS: usize = 2_000;
+        #[cfg(not(debug_assertions))]
+        const TARGET_US: f64 = 1_000.0;
+
+        // Warmup
+        let _ = dispatch(Request::new("meta", None, "version", json!({}))).await;
+
+        let start = Instant::now();
+        for _ in 0..ITERATIONS {
+            let resp = dispatch(Request::new("meta", None, "version", json!({}))).await;
+            assert!(resp.ok, "dispatch failed: {:?}", resp.error);
+        }
+        let elapsed = start.elapsed();
+        let avg_us = (elapsed.as_secs_f64() * 1_000_000.0) / ITERATIONS as f64;
+        println!("\nmeta dispatch average latency: {avg_us:.2}us ({ITERATIONS} iterations)");
+
+        #[cfg(not(debug_assertions))]
+        assert!(
+            avg_us < TARGET_US,
+            "average latency {avg_us:.2}us exceeds {TARGET_US}us target"
+        );
+    }
 }
