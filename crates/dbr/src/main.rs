@@ -26,7 +26,7 @@ enum Commands {
         #[command(subcommand)]
         cmd: JobsCmd,
     },
-    /// List and inspect job runs
+    /// List and inspect job runs (legacy alias; prefer `jobs <run-subcommand>`)
     Runs {
         #[command(subcommand)]
         cmd: RunsCmd,
@@ -93,11 +93,30 @@ enum JobsCmd {
         #[arg(long)]
         job_id: i64,
     },
+    /// List recent runs for a job
+    ListRuns {
+        #[arg(long)]
+        job_id: i64,
+        /// Maximum number of runs to return
+        #[arg(long, default_value = "10")]
+        limit: u32,
+    },
+    /// Get run status (compact: run_id, state, result, timing)
+    GetRun {
+        #[arg(long)]
+        run_id: i64,
+    },
+    /// Get run output (notebook result or error)
+    GetRunOutput {
+        #[arg(long)]
+        run_id: i64,
+    },
 }
 
 #[derive(Subcommand)]
 enum RunsCmd {
     /// List recent runs for a job
+    #[command(alias = "list-runs")]
     List {
         #[arg(long)]
         job_id: i64,
@@ -106,11 +125,13 @@ enum RunsCmd {
         limit: u32,
     },
     /// Get run status (compact: run_id, state, result, timing)
+    #[command(alias = "get-run")]
     Get {
         #[arg(long)]
         run_id: i64,
     },
     /// Get run output (notebook result or error)
+    #[command(alias = "get-run-output")]
     Output {
         #[arg(long)]
         run_id: i64,
@@ -310,6 +331,11 @@ fn command_to_request(conn: Option<String>, command: &Commands) -> Request {
             JobsCmd::List { limit } => ("jobs/list", json!({"limit": limit})),
             JobsCmd::Get { job_id } => ("jobs/get", json!({"job_id": job_id})),
             JobsCmd::Trigger { job_id } => ("jobs/trigger", json!({"job_id": job_id})),
+            JobsCmd::ListRuns { job_id, limit } => {
+                ("runs/list", json!({"job_id": job_id, "limit": limit}))
+            }
+            JobsCmd::GetRun { run_id } => ("runs/get", json!({"run_id": run_id})),
+            JobsCmd::GetRunOutput { run_id } => ("runs/output", json!({"run_id": run_id})),
         },
         Commands::Runs { cmd } => match cmd {
             RunsCmd::List { job_id, limit } => {

@@ -91,7 +91,12 @@ tkdbr tables list --conn <conn> --catalog my_catalog --schema my_schema --omit-c
 tkdbr jobs list --conn <conn> [--limit 25]
 tkdbr jobs get --conn <conn> --job-id 123
 
-# List recent runs for a job
+# List recent runs for a job (Databricks-style)
+tkdbr jobs list-runs --conn <conn> --job-id 123 [--limit 10]
+tkdbr jobs get-run --conn <conn> --run-id 456
+tkdbr jobs get-run-output --conn <conn> --run-id 456
+
+# Legacy aliases (still supported)
 tkdbr runs list --conn <conn> --job-id 123 [--limit 10]
 tkdbr runs get --conn <conn> --run-id 456
 tkdbr runs output --conn <conn> --run-id 456

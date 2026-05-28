@@ -499,7 +499,14 @@ pub fn runs_list(config: &ConnConfig, job_id: i64, limit: u32) -> Result<Value> 
     let limit_str = limit.to_string();
     let raw = run_databricks(
         config,
-        &["jobs", "list-runs", "--job-id", &id_str, "--limit", &limit_str],
+        &[
+            "jobs",
+            "list-runs",
+            "--job-id",
+            &id_str,
+            "--limit",
+            &limit_str,
+        ],
     )?;
 
     let runs = raw

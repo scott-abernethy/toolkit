@@ -127,7 +127,12 @@ tkdbr --conn prod jobs get --job-id 123
 # Trigger a job run (requires allow_job_runs = true in config)
 tkdbr --conn prod jobs trigger --job-id 123
 
-# List and inspect job runs
+# List and inspect job runs (Databricks-style)
+tkdbr --conn prod jobs list-runs --job-id 123 [--limit 10]
+tkdbr --conn prod jobs get-run --run-id 456
+tkdbr --conn prod jobs get-run-output --run-id 456
+
+# Legacy aliases (still supported)
 tkdbr --conn prod runs list --job-id 123 [--limit 10]
 tkdbr --conn prod runs get --run-id 456
 tkdbr --conn prod runs output --run-id 456
