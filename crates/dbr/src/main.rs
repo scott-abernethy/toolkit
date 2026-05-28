@@ -56,7 +56,7 @@ enum Commands {
         #[command(subcommand)]
         cmd: TablesCmd,
     },
-    /// Manage Databricks bundles (validate, deploy, run)
+    /// Manage Databricks bundles (validate, deploy, run, destroy)
     Bundle {
         #[command(subcommand)]
         cmd: BundleCmd,
@@ -226,6 +226,8 @@ enum BundleCmd {
     Validate,
     /// Deploy the bundle (runs `databricks bundle deploy -t <target>`)
     Deploy,
+    /// Destroy deployed bundle resources (runs `databricks bundle destroy -t <target> --auto-approve`)
+    Destroy,
     /// Run a bundle resource (runs `databricks bundle run <name> -t <target>`)
     Run {
         /// Name of the bundle resource to run
@@ -415,6 +417,7 @@ fn run_bundle_command(conn: Option<String>, cmd: &BundleCmd) -> Result<()> {
     let result = match cmd {
         BundleCmd::Validate => tkdbr::bundle_validate_local(&ctx, Some(&cwd)),
         BundleCmd::Deploy => tkdbr::bundle_deploy_local(&ctx, Some(&cwd)),
+        BundleCmd::Destroy => tkdbr::bundle_destroy_local(&ctx, Some(&cwd)),
         BundleCmd::Run { name, only } => {
             tkdbr::bundle_run_local(&ctx, name, only.as_deref(), Some(&cwd))
         }

@@ -995,6 +995,16 @@ pub fn bundle_deploy(config: &ConnConfig, cwd: Option<&str>) -> Result<Value> {
     Ok(json!({"ok": true}))
 }
 
+pub fn bundle_destroy(config: &ConnConfig, cwd: Option<&str>) -> Result<Value> {
+    let target = config.get_bundle_target();
+    run_databricks_no_json(
+        config,
+        &["bundle", "destroy", "-t", &target, "--auto-approve"],
+        cwd,
+    )?;
+    Ok(json!({"ok": true}))
+}
+
 pub fn bundle_run(
     config: &ConnConfig,
     name: &str,
@@ -1033,6 +1043,21 @@ pub fn bundle_validate_local(ctx: &BundleContext, cwd: Option<&str>) -> Result<V
 
 pub fn bundle_deploy_local(ctx: &BundleContext, cwd: Option<&str>) -> Result<Value> {
     run_bundle_no_json(ctx, &["bundle", "deploy", "-t", &ctx.bundle_target], cwd)?;
+    Ok(json!({"ok": true}))
+}
+
+pub fn bundle_destroy_local(ctx: &BundleContext, cwd: Option<&str>) -> Result<Value> {
+    run_bundle_no_json(
+        ctx,
+        &[
+            "bundle",
+            "destroy",
+            "-t",
+            &ctx.bundle_target,
+            "--auto-approve",
+        ],
+        cwd,
+    )?;
     Ok(json!({"ok": true}))
 }
 

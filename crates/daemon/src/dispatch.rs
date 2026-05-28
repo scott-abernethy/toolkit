@@ -285,6 +285,11 @@ enum DbrOp {
         #[serde(default)]
         cwd: Option<String>,
     },
+    #[serde(rename = "bundle/destroy")]
+    BundleDestroy {
+        #[serde(default)]
+        cwd: Option<String>,
+    },
     #[serde(rename = "bundle/run")]
     BundleRun {
         name: String,
@@ -368,6 +373,9 @@ fn dispatch_dbr_sync(config: &tkdbr::ConnConfig, op: DbrOp) -> Response {
         }
         DbrOp::BundleDeploy { cwd } => {
             to_value_result(tkdbr::bundle_deploy(config, cwd.as_deref()))
+        }
+        DbrOp::BundleDestroy { cwd } => {
+            to_value_result(tkdbr::bundle_destroy(config, cwd.as_deref()))
         }
         DbrOp::BundleRun { name, only, cwd } => to_value_result(tkdbr::bundle_run(
             config,
@@ -547,6 +555,15 @@ mod tests {
         match op {
             DbrOp::BundleDeploy { cwd } => assert!(cwd.is_none()),
             _ => panic!("expected BundleDeploy"),
+        }
+    }
+
+    #[test]
+    fn dbr_bundle_destroy_without_cwd_defaults_to_none() {
+        let op: DbrOp = parse_op("dbr", "bundle/destroy", &json!({})).unwrap();
+        match op {
+            DbrOp::BundleDestroy { cwd } => assert!(cwd.is_none()),
+            _ => panic!("expected BundleDestroy"),
         }
     }
 

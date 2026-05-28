@@ -150,6 +150,7 @@ tkdbr --conn prod warehouses get --warehouse-id abc-123
 tkdbr --conn prod bundle validate
 tkdbr --conn prod bundle deploy
 tkdbr --conn prod bundle run my-job
+tkdbr --conn prod bundle destroy
 ```
 
 Output is compact, agent-friendly JSON optimized for token efficiency. All read operations are safe; only `jobs trigger` requires explicit permission via `allow_job_runs = true` in config.

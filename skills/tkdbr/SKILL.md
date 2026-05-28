@@ -129,6 +129,9 @@ tkdbr bundle deploy --conn <conn>
 
 # Run a named resource from the bundle
 tkdbr bundle run my-job --conn <conn>
+
+# Destroy deployed bundle resources on the configured target
+tkdbr bundle destroy --conn <conn>
 ```
 
 ## Output Format
