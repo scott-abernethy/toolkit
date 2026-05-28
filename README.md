@@ -1,5 +1,10 @@
 # toolkit
 
+[![Release workflow](https://github.com/scott-abernethy/toolkit/actions/workflows/release-private-tap.yml/badge.svg)](https://github.com/scott-abernethy/toolkit/actions/workflows/release-private-tap.yml)
+[![Release](https://img.shields.io/github/v/release/scott-abernethy/toolkit)](https://github.com/scott-abernethy/toolkit/releases)
+[![License](https://img.shields.io/github/license/scott-abernethy/toolkit)](LICENSE)
+[![Homebrew tap](https://img.shields.io/badge/homebrew-tap-orange?logo=homebrew)](https://github.com/scott-abernethy/homebrew-tap)
+
 A safety kit for your tools — reducing the blast radius and leak surface when AI coding agents touch sensitive services.
 
 ## The Problem
