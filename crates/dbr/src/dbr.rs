@@ -521,7 +521,7 @@ pub fn runs_list(config: &ConnConfig, job_id: i64, limit: u32) -> Result<Value> 
 
 pub fn runs_get(config: &ConnConfig, run_id: i64) -> Result<Value> {
     let id_str = run_id.to_string();
-    let raw = run_databricks(config, &["jobs", "get-run", "--run-id", &id_str])?;
+    let raw = run_databricks(config, &["jobs", "get-run", &id_str])?;
     Ok(compact_run(&raw))
 }
 
@@ -548,7 +548,7 @@ fn compact_run(r: &Value) -> Value {
 
 pub fn runs_output(config: &ConnConfig, run_id: i64) -> Result<Value> {
     let id_str = run_id.to_string();
-    let raw = run_databricks(config, &["jobs", "get-run-output", "--run-id", &id_str])?;
+    let raw = run_databricks(config, &["jobs", "get-run-output", &id_str])?;
 
     let state = raw["metadata"].get("state").unwrap_or(&Value::Null);
 
