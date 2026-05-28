@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- [asdf](https://asdf-vm.com) with the rust plugin: `asdf plugin add rust && asdf install`
+- [mise](https://mise.jdx.dev): `mise install`
 - [just](https://github.com/casey/just): `brew install just`
 - [gitleaks](https://github.com/gitleaks/gitleaks): `brew install gitleaks`
 - `~/.cargo/bin` on your `PATH`: add `export PATH="$HOME/.cargo/bin:$PATH"` to your `~/.zshrc`
