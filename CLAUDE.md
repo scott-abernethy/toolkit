@@ -26,7 +26,7 @@ cargo test -p msql <test_name>     # test in msql crate
 cargo test -p dbr <test_name>      # test in dbr crate
 ```
 
-Rust toolchain is managed via asdf (see `.tool-versions`).
+Rust toolchain is managed via mise (using `.tool-versions`).
 
 ## Architecture
 
