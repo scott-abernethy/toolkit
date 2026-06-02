@@ -1,7 +1,7 @@
 use common::sql::{self, QueryResponse};
 use common::{load_named_section, Result, ToolkitError};
 use serde::Deserialize;
-use serde_json::{Map, Value};
+use serde_json::Value;
 use tiberius::{AuthMethod, Client, ColumnData, Config, EncryptionLevel};
 use tokio::net::TcpStream;
 use tokio_util::compat::TokioAsyncWriteCompatExt;
@@ -241,26 +241,29 @@ async fn exec_query(
     config: &ConnConfig,
     sql: &str,
     params: &[&dyn tiberius::ToSql],
-) -> Result<Vec<Map<String, Value>>> {
+) -> Result<(Vec<String>, Vec<Vec<Value>>)> {
     let mut client = connect(config).await?;
     let stream = client
         .query(sql, params)
         .await
         .map_err(|e| sanitize_tds_error(&e))?;
 
-    let rows = stream
+    let raw = stream
         .into_first_result()
         .await
         .map_err(|e| sanitize_tds_error(&e))?;
 
-    Ok(rows
+    let columns: Vec<String> = raw
+        .first()
+        .map(|row| row.cells().map(|(col, _)| col.name().to_string()).collect())
+        .unwrap_or_default();
+
+    let rows: Vec<Vec<Value>> = raw
         .iter()
-        .map(|row| {
-            row.cells()
-                .map(|(col, data)| (col.name().to_string(), cell_to_json(data)))
-                .collect()
-        })
-        .collect())
+        .map(|row| row.cells().map(|(_, data)| cell_to_json(data)).collect())
+        .collect();
+
+    Ok((columns, rows))
 }
 
 // ---------------------------------------------------------------------------
@@ -276,19 +279,19 @@ pub async fn run_query(config: &ConnConfig, sql: &str) -> Result<QueryResponse> 
     for table in sql::detect_write_targets(sql) {
         sql::assert_write_allowed(config.writable_tables.as_ref(), &table)?;
     }
-    let rows = exec_query(config, sql, &[]).await?;
-    Ok(QueryResponse::from_rows(rows))
+    let (columns, rows) = exec_query(config, sql, &[]).await?;
+    Ok(QueryResponse::new(columns, rows))
 }
 
 pub async fn list_tables(config: &ConnConfig, schema: &str) -> Result<QueryResponse> {
-    let rows = exec_query(
+    let (columns, rows) = exec_query(
         config,
         "SELECT table_name FROM information_schema.tables \
          WHERE table_schema = @P1 ORDER BY table_name",
         &[&schema],
     )
     .await?;
-    Ok(QueryResponse::from_rows(rows))
+    Ok(QueryResponse::new(columns, rows))
 }
 
 pub async fn describe_table(config: &ConnConfig, table: &str) -> Result<QueryResponse> {
@@ -299,7 +302,7 @@ pub async fn describe_table(config: &ConnConfig, table: &str) -> Result<QueryRes
         ("dbo", table)
     };
 
-    let rows = exec_query(
+    let (columns, rows) = exec_query(
         config,
         "SELECT column_name, data_type, is_nullable, column_default \
          FROM information_schema.columns \
@@ -308,5 +311,5 @@ pub async fn describe_table(config: &ConnConfig, table: &str) -> Result<QueryRes
         &[&schema, &tbl],
     )
     .await?;
-    Ok(QueryResponse::from_rows(rows))
+    Ok(QueryResponse::new(columns, rows))
 }

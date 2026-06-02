@@ -5,7 +5,7 @@ use native_tls::TlsConnector;
 use postgres::types::Type;
 use postgres_native_tls::MakeTlsConnector;
 use serde::Deserialize;
-use serde_json::{Map, Value};
+use serde_json::Value;
 use std::time::Duration;
 use uuid::Uuid;
 
@@ -198,12 +198,12 @@ fn cell_to_json(row: &postgres::Row, i: usize) -> Value {
     }
 }
 
-fn row_to_json(row: &postgres::Row) -> Map<String, Value> {
-    row.columns()
-        .iter()
-        .enumerate()
-        .map(|(i, col)| (col.name().to_string(), cell_to_json(row, i)))
-        .collect()
+fn extract_columns(row: &postgres::Row) -> Vec<String> {
+    row.columns().iter().map(|c| c.name().to_string()).collect()
+}
+
+fn row_to_cells(row: &postgres::Row) -> Vec<Value> {
+    (0..row.columns().len()).map(|i| cell_to_json(row, i)).collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -255,8 +255,9 @@ pub fn run_query(config: &ConnConfig, sql: &str) -> Result<QueryResponse> {
         }
     };
 
-    let rows: Vec<Map<String, Value>> = raw.iter().map(row_to_json).collect();
-    Ok(QueryResponse::from_rows(rows))
+    let columns = raw.first().map(extract_columns).unwrap_or_default();
+    let rows: Vec<Vec<Value>> = raw.iter().map(row_to_cells).collect();
+    Ok(QueryResponse::new(columns, rows))
 }
 
 pub fn list_tables(config: &ConnConfig, schema: &str) -> Result<QueryResponse> {
@@ -266,8 +267,9 @@ pub fn list_tables(config: &ConnConfig, schema: &str) -> Result<QueryResponse> {
          WHERE table_schema = $1 ORDER BY table_name",
         &[&schema],
     )?;
-    let rows: Vec<Map<String, Value>> = raw.iter().map(row_to_json).collect();
-    Ok(QueryResponse::from_rows(rows))
+    let columns = raw.first().map(extract_columns).unwrap_or_default();
+    let rows: Vec<Vec<Value>> = raw.iter().map(row_to_cells).collect();
+    Ok(QueryResponse::new(columns, rows))
 }
 
 pub fn describe_table(config: &ConnConfig, table: &str) -> Result<QueryResponse> {
@@ -286,6 +288,7 @@ pub fn describe_table(config: &ConnConfig, table: &str) -> Result<QueryResponse>
          ORDER BY ordinal_position",
         &[&schema, &tbl],
     )?;
-    let rows: Vec<Map<String, Value>> = raw.iter().map(row_to_json).collect();
-    Ok(QueryResponse::from_rows(rows))
+    let columns = raw.first().map(extract_columns).unwrap_or_default();
+    let rows: Vec<Vec<Value>> = raw.iter().map(row_to_cells).collect();
+    Ok(QueryResponse::new(columns, rows))
 }

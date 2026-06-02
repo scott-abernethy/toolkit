@@ -1,6 +1,6 @@
 use crate::error::{Result, ToolkitError};
 use serde::Serialize;
-use serde_json::{Map, Value};
+use serde_json::Value;
 
 // ---------------------------------------------------------------------------
 // Write-permission guard
@@ -123,14 +123,15 @@ pub fn assert_write_allowed(writable_tables: Option<&Vec<String>>, table: &str) 
 
 #[derive(Serialize)]
 pub struct QueryResponse {
-    pub rows: Vec<Map<String, Value>>,
+    pub columns: Vec<String>,
+    pub rows: Vec<Vec<Value>>,
     pub count: usize,
 }
 
 impl QueryResponse {
-    pub fn from_rows(rows: Vec<Map<String, Value>>) -> Self {
+    pub fn new(columns: Vec<String>, rows: Vec<Vec<Value>>) -> Self {
         let count = rows.len();
-        Self { rows, count }
+        Self { columns, rows, count }
     }
 }
 
