@@ -73,10 +73,21 @@ enum Commands {
     },
     /// Validate daemon and harness integration setup
     Validate,
+    /// Run the privileged daemon setup script (requires sudo internally)
+    Setup,
+    /// Guard wrapper management and execution
+    Guard {
+        #[command(subcommand)]
+        cmd: GuardCmd,
+    },
+}
+
+#[derive(Subcommand)]
+enum GuardCmd {
     /// Generate guarded wrapper scripts
     Install,
     /// Run a CLI through the toolkit guard (used by generated wrapper scripts)
-    Guard {
+    Run {
         /// App name — matches config section (e.g. kubectl, pup)
         #[arg(long)]
         app: String,
@@ -128,9 +139,14 @@ fn run() -> Result<i32> {
         Cli::parse()
     };
 
-    // Guard is invoked by generated wrapper scripts in agent context — allow it.
-    // All other commands must be blocked for agents.
-    if !matches!(cli.command, Commands::Guard { .. }) {
+    // Guard run is invoked by generated wrapper scripts in agent context — allow it.
+    // All other commands (including guard install) must be blocked for agents.
+    if !matches!(
+        cli.command,
+        Commands::Guard {
+            cmd: GuardCmd::Run { .. }
+        }
+    ) {
         reject_if_agent();
     }
     match cli.command {
@@ -155,25 +171,31 @@ fn run() -> Result<i32> {
             Ok(0)
         }
         Commands::Validate => validate::run(),
-        Commands::Install => {
-            cmd_install()?;
+        Commands::Setup => {
+            cmd_setup()?;
             Ok(0)
         }
-        Commands::Guard {
-            app,
-            conn,
-            debug,
-            args,
-        } => {
-            let config = guard::load_config(&app, conn.as_deref())?;
-            let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-            guard::check_rules(&config, &arg_refs)?;
-            if debug {
-                let elapsed = start.elapsed();
-                eprintln!("[guard] overhead: {:.1}ms", elapsed.as_secs_f64() * 1000.0);
+        Commands::Guard { cmd } => match cmd {
+            GuardCmd::Install => {
+                cmd_install()?;
+                Ok(0)
             }
-            guard::run(&config, &args)
-        }
+            GuardCmd::Run {
+                app,
+                conn,
+                debug,
+                args,
+            } => {
+                let config = guard::load_config(&app, conn.as_deref())?;
+                let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+                guard::check_rules(&config, &arg_refs)?;
+                if debug {
+                    let elapsed = start.elapsed();
+                    eprintln!("[guard] overhead: {:.1}ms", elapsed.as_secs_f64() * 1000.0);
+                }
+                guard::run(&config, &args)
+            }
+        },
     }
 }
 
@@ -182,6 +204,32 @@ fn main() {
         Ok(code) => process::exit(code),
         Err(e) => exit_with_error(e),
     }
+}
+
+fn cmd_setup() -> Result<()> {
+    // Homebrew layout: bin/toolkit lives one level above libexec/.
+    // Resolve symlinks first so we get the real path under opt/toolkit/bin/.
+    let script = std::env::current_exe()
+        .ok()
+        .and_then(|p| std::fs::canonicalize(p).ok())
+        .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+        .and_then(|bin| bin.parent().map(|p| p.join("libexec/setup-daemon.sh")))
+        .filter(|p| p.exists())
+        .ok_or_else(|| {
+            ToolkitError::not_found(
+                "setup-daemon.sh not found — is toolkit installed via Homebrew?",
+            )
+        })?;
+
+    let status = process::Command::new("sudo")
+        .arg(&script)
+        .status()
+        .map_err(|e| ToolkitError::other(format!("failed to run sudo: {e}")))?;
+
+    if !status.success() {
+        process::exit(status.code().unwrap_or(1));
+    }
+    Ok(())
 }
 
 fn cmd_install() -> Result<()> {
@@ -233,7 +281,7 @@ fn cmd_install() -> Result<()> {
         let name = format!("tk{}-{}", app, conn);
         let script_path = bin_dir.join(&name);
         let script = format!(
-            "#!/bin/sh\nexec toolkit guard --app {} --conn {} -- \"$@\"\n",
+            "#!/bin/sh\nexec toolkit guard run --app {} --conn {} -- \"$@\"\n",
             app, conn
         );
 

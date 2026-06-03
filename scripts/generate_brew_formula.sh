@@ -86,9 +86,9 @@ class Toolkit < Formula
 
   def caveats
     <<~EOS
-      ⚠️  Complete daemon setup by running (requires sudo):
+      Complete daemon setup by running:
 
-        sudo #{opt_libexec}/setup-daemon.sh
+        toolkit setup
 
       This is required after both fresh installs and upgrades.
     EOS
