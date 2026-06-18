@@ -59,7 +59,7 @@ brew tap scott-abernethy/tap
 brew install scott-abernethy/tap/toolkit
 
 # Run the privileged setup script (creates _toolkit user, installs LaunchDaemon)
-sudo $(brew --prefix)/opt/toolkit/libexec/setup-daemon.sh
+toolkit setup
 
 # Configure connections
 toolkit config edit   # opens daemon config in $EDITOR via sudo
