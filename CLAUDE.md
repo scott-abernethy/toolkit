@@ -39,6 +39,7 @@ crates/
   msql/     # tkmsql binary + lib — MS SQL Server query tool
   dbr/      # tkdbr binary + lib — Databricks CLI wrapper
   libtoolkit/ # transport-agnostic dispatch core: Request → Response, links the tk* libs
+  mcp/      # toolkit-mcp binary — MCP (stdio JSON-RPC) server fronting the daemon
   daemon/   # toolkit-daemon binary — separate-UID dispatch process
   toolkit/  # toolkit binary — daemon config management + CLI guard
 hooks/      # harness hook recipes (Claude Code, opencode)
@@ -109,9 +110,18 @@ If one connection is configured, `--conn` is optional; if multiple exist, `--con
 - Long-running process owned by a dedicated `_toolkit` system user; only the daemon UID can read the config
 - Listens on a UNIX socket (`/tmp/toolkit.sock` by default; override with `TOOLKIT_SOCKET` or `daemon.socket_path` in config)
 - Enforces peer UID via `getpeereid` (macOS) / `SO_PEERCRED` (Linux); optional `daemon.allowed_uids` allowlist
-- Dispatches requests to per-tool lib functions (psql, msql, dbr) and guard config requests; 1 MiB frame limit, 120s read timeout
+- Dispatches each request via `libtoolkit::dispatch` (per-tool lib functions for psql, msql, dbr, plus guard config requests); 1 MiB frame limit, 120s read timeout
 - Fails closed: stale-socket cleanup refuses to unlink non-socket files; CLI client returns `ToolkitError::Daemon` if the socket is unreachable
 - Setup: see `docs/daemon.md`
+
+### `toolkit-mcp` (MCP Server)
+
+- A Model Context Protocol server that fronts the daemon, so harnesses that speak MCP (and the developers/QA/helpdesk staff who configure them) get the toolkit surface without learning the `tk*` CLIs
+- Speaks newline-delimited JSON-RPC 2.0 over stdio; maps each `tools/call` onto a toolkit wire `Request` and forwards it via `common::client::send`
+- **Same trust boundary as the CLIs**: links only `common` (client + protocol), never `libtoolkit`, never reads the config. All credentials and enforcement stay behind the daemon socket
+- Tool surface is the static `crates/mcp/src/catalog.rs`, which mirrors the `tk*` CLIs one-for-one (internal `auth/*` and `guard` ops are excluded)
+- Daemon/upstream failures are returned as MCP results with `isError: true` (model-visible structured JSON), not as JSON-RPC protocol errors
+- Setup: see `docs/mcp.md`
 
 ### Credential Injection
 

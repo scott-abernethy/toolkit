@@ -100,6 +100,7 @@ Adding a new service requires only a config stanza, not a new Rust crate. See [d
 
 Toolkit includes skill and agent definitions so AI harnesses can discover and use the tools automatically.
 
+- **MCP server** (`toolkit-mcp`) — an [MCP](https://modelcontextprotocol.io) server that fronts the daemon, so any MCP-capable harness can use the toolkit surface over stdio without the `tk*` CLIs. Same trust boundary as the CLIs. See [docs/mcp.md](docs/mcp.md).
 - **Skills** (for [opencode](https://opencode.ai)) — teach the agent when and how to invoke each tool.
 - **Agents** (for [GitHub Copilot CLI](https://docs.github.com/copilot/concepts/agents/about-copilot-cli)) — specialized sub-agents with focused workflows.
 
@@ -121,6 +122,7 @@ See [docs/hooks.md](docs/hooks.md) for full instructions.
 - [Usage examples](docs/usage.md) — detailed command reference
 - [Configuration](docs/configuration.md) — config file format
 - [Daemon transport](docs/daemon.md) — separate-UID setup and security
+- [MCP server](docs/mcp.md) — Model Context Protocol frontend for MCP-capable harnesses
 - [Threat model](docs/threat-model.md) — attacker model, limitations, and layered controls
 - [Harness hooks](docs/hooks.md) — Claude / opencode / Copilot CLI recipes
 - [Contributing](docs/contributing.md) — development commands and prerequisites
