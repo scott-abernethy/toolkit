@@ -819,6 +819,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "libtoolkit"
+version = "0.4.0"
+dependencies = [
+ "common",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "tkdbr",
+ "tkmsql",
+ "tkpsql",
+ "tokio",
+]
+
+[[package]]
 name = "linux-raw-sys"
 version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1810,12 +1824,9 @@ version = "0.4.0"
 dependencies = [
  "common",
  "libc",
+ "libtoolkit",
  "serde",
  "serde_json",
- "serde_yaml",
- "tkdbr",
- "tkmsql",
- "tkpsql",
  "tokio",
 ]
 

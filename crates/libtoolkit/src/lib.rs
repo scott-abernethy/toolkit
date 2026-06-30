@@ -1,3 +1,17 @@
+//! libtoolkit — the transport-agnostic dispatch core.
+//!
+//! Decodes a [`Request`] into a typed, per-tool operation, enforces tool-specific
+//! safety checks (write-target allowlists for SQL, allow/deny rules for guard),
+//! and routes it to the appropriate `tk*` library function, returning a
+//! [`Response`]. It performs no transport I/O of its own: callers (the daemon
+//! today; an MCP server or in-process host in future) own the transport and the
+//! security context, and simply hand requests to [`dispatch`].
+//!
+//! **Trust context:** [`dispatch`] reads the daemon-owned config file via the
+//! `tk*` `load_config` helpers, so it must only ever run inside a trusted host
+//! (the `_toolkit`-owned daemon, or a deliberately-chosen in-process host).
+//! Never link this crate into an agent-facing client binary.
+
 use common::error::Result as ToolkitResult;
 use common::protocol::{Request, Response, PROTOCOL_VERSION};
 use serde::Deserialize;

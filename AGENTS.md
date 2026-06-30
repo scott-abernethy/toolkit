@@ -38,6 +38,7 @@ crates/
   psql/     # tkpsql binary + lib — PostgreSQL query tool
   msql/     # tkmsql binary + lib — MS SQL Server query tool
   dbr/      # tkdbr binary + lib — Databricks CLI wrapper
+  libtoolkit/ # transport-agnostic dispatch core: Request → Response, links the tk* libs
   daemon/   # toolkit-daemon binary — separate-UID dispatch process
   toolkit/  # toolkit binary — daemon config management + CLI guard
 hooks/      # harness hook recipes (Claude Code, opencode)
@@ -52,9 +53,10 @@ Each native client crate (`psql`, `msql`, `dbr`) ships both a binary and a `lib.
 
 - Library functions return `Result<T, ToolkitError>` with no stdout side effects — they don't print, log progress, or assume an argv shape.
 - The CLI `main.rs` parses args, sends a JSON request to the daemon, and prints the result.
-- `toolkit-daemon` depends on each `tk*` lib and dispatches requests by tool/op name.
+- `libtoolkit` (`crates/libtoolkit`) is the transport-agnostic dispatch core: it decodes a `Request` into a typed per-tool op, enforces tool-specific checks, calls the right `tk*` lib function, and returns a `Response`. It performs no transport I/O itself.
+- `toolkit-daemon` owns the transport (UNIX socket + peer-UID auth) and hands each request to `libtoolkit::dispatch`. Future hosts (an MCP server, an in-process runner) reuse the same core.
 
-Adding a new operation means: add the function to the lib, add a CLI subcommand that calls it, and add a dispatch arm in `crates/daemon/src/dispatch.rs`. The wire protocol (`Request{tool, conn, op, params}`) is the contract between CLI and daemon.
+Adding a new operation means: add the function to the lib, add a CLI subcommand that calls it, and add a dispatch arm in `crates/libtoolkit/src/lib.rs`. The wire protocol (`Request{tool, conn, op, params}`) is the contract between CLI and daemon.
 
 ### Common Library (`crates/common`)
 
@@ -188,7 +190,7 @@ daemon:
 3. Add `common = { path = "../common" }` to the new crate's dependencies
 4. Split the implementation into `lib.rs` (transport-agnostic functions returning `Result<T, ToolkitError>`) and `main.rs` (clap parsing + daemon dispatch via `common::client::send`)
 5. Add a `[name]` section to the daemon config and load it with `common::load_named_section`
-6. Expose a lib target in `Cargo.toml`, add the crate as a dep in `crates/daemon/Cargo.toml`, and add dispatch arms in `crates/daemon/src/dispatch.rs`
+6. Expose a lib target in `Cargo.toml`, add the crate as a dep in `crates/libtoolkit/Cargo.toml`, and add dispatch arms in `crates/libtoolkit/src/lib.rs`
 7. Tools should be self-documenting via `--help`; prefer subcommands over positional args; fail fast rather than prompting
 
 ## Conventions

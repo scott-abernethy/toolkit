@@ -1,5 +1,4 @@
 mod audit;
-mod dispatch;
 
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::io::AsRawFd;
@@ -149,7 +148,7 @@ async fn handle_connection(
             let tool = req.tool.clone();
             let conn = req.conn.clone();
             let op = req.op.clone();
-            let resp = dispatch::dispatch(req).await;
+            let resp = libtoolkit::dispatch(req).await;
             (Some(tool), conn, Some(op), resp)
         }
         Err(e) => (

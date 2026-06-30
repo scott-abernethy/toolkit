@@ -3,6 +3,7 @@ members = [
     "crates/common",
     "crates/daemon",
     "crates/dbr",
+    "crates/libtoolkit",
     "crates/msql",
     "crates/psql",
     "crates/toolkit",
