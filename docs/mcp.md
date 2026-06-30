@@ -59,6 +59,40 @@ JSON Schemas.
   daemon's structured `{"error": "..."}` JSON in the text block, so the model
   can read and react to them.
 
+## Credentials and daemon setup
+
+`toolkit-mcp` does not introduce any new credential storage or daemon setup.
+It is purely an additional transport in front of the daemon you already
+configured for `tkpsql`/`tkmsql`/`tkdbr`. If `toolkit status` reports the
+daemon is up and the native CLIs already work, `toolkit-mcp` works too —
+nothing in `config.yaml` or daemon setup needs to change. See
+[docs/daemon.md](daemon.md) for daemon setup and [docs/configuration.md](configuration.md)
+for the config file format.
+
+## Installing the binary
+
+`toolkit-mcp` is built and packaged alongside the other binaries:
+
+```sh
+cargo build --release -p toolkit-mcp
+# binary at target/release/toolkit-mcp
+```
+
+`brew install scott-abernethy/tap/toolkit` installs `toolkit-mcp` to the same
+`bin` directory as `toolkit`, `tkpsql`, `tkmsql`, `tkdbr`, and
+`toolkit-daemon` — no separate package.
+
+## MCP mode vs. CLI-daemon mode
+
+MCP mode is **additive, not a replacement**. The `tk*` CLIs and `toolkit-mcp`
+are two transports in front of the same daemon — you don't migrate away from
+one to use the other, and both can run side by side. Use the native CLIs for
+shell-driven workflows (skills, agents, scripts) and `toolkit-mcp` for
+harnesses that speak MCP and don't shell out to `tk*` binaries directly. There
+is nothing to uninstall or reconfigure when adding MCP mode: keep the daemon
+and `config.yaml` as they are and just register `toolkit-mcp` with the
+harness, as shown below.
+
 ## Registering with a harness
 
 `toolkit-mcp` is spawned by the harness and talks over stdio. Point your MCP
@@ -90,6 +124,29 @@ proxy reads `TOOLKIT_SOCKET`, same as the CLIs):
 
 The daemon must be running and reachable for tool calls to succeed; see
 [docs/daemon.md](daemon.md).
+
+### GitHub Copilot CLI
+
+Copilot CLI keeps its own MCP server list in `~/.copilot/mcp-config.json`
+(distinct from the `mcp.json`-style examples above). Register `toolkit-mcp`
+with the `copilot mcp add` subcommand:
+
+```sh
+copilot mcp add toolkit -- toolkit-mcp
+```
+
+With a non-default socket:
+
+```sh
+copilot mcp add toolkit -e TOOLKIT_SOCKET=/run/toolkit/toolkit.sock -- toolkit-mcp
+```
+
+Or interactively: run `/mcp add` inside a Copilot CLI session, set **Server
+Type** to `Local` or `STDIO`, **Command** to `toolkit-mcp`, and add
+`TOOLKIT_SOCKET` under **Environment Variables** only if you've overridden the
+socket path. Either method writes the same entry to
+`~/.copilot/mcp-config.json`; you can also edit that file by hand. Verify with
+`/mcp` or `/env` inside a session to confirm `toolkit` is listed and connected.
 
 ## Smoke test
 

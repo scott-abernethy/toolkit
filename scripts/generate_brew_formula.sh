@@ -81,6 +81,7 @@ class Toolkit < Formula
     bin.install "tkmsql"
     bin.install "tkdbr"
     bin.install "toolkit-daemon"
+    bin.install "toolkit-mcp"
     libexec.install "libexec/setup-daemon.sh"
   end
 
