@@ -42,6 +42,11 @@ pub async fn dispatch(req: Request) -> Response {
 #[serde(tag = "op", rename_all = "lowercase")]
 enum MetaOp {
     Version,
+    #[serde(rename = "log/append")]
+    LogAppend {
+        context: String,
+        message: String,
+    },
 }
 
 // The wire shape of `meta/version` must remain stable across protocol
@@ -55,6 +60,13 @@ async fn dispatch_meta(req: Request) -> Response {
         MetaOp::Version => Response::ok(serde_json::json!({
             "protocol_version": PROTOCOL_VERSION,
         })),
+        // Relay target for clients (e.g. `tkdbr bundle deploy`) that run a
+        // subprocess locally and can't write `common::errorlog` themselves —
+        // the daemon has the `_toolkit` privileges needed to do so.
+        MetaOp::LogAppend { context, message } => {
+            common::errorlog::append(&context, &message);
+            Response::ok(serde_json::json!({"ok": true}))
+        }
     }
 }
 
