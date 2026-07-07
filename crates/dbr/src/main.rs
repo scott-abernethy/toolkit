@@ -225,7 +225,13 @@ enum BundleCmd {
     /// Validate the bundle (runs `databricks bundle validate -t <target>`)
     Validate,
     /// Deploy the bundle (runs `databricks bundle deploy -t <target>`)
-    Deploy,
+    Deploy {
+        /// Force-acquire the deployment lock and override warnings about
+        /// resources modified remotely since the last deployment (e.g. a
+        /// dashboard edited outside the bundle). Passes `--force` through.
+        #[arg(long)]
+        force: bool,
+    },
     /// Destroy deployed bundle resources (runs `databricks bundle destroy -t <target> --auto-approve`)
     Destroy,
     /// Run a bundle resource (runs `databricks bundle run <name> -t <target>`)
@@ -416,7 +422,7 @@ fn run_bundle_command(conn: Option<String>, cmd: &BundleCmd) -> Result<()> {
     let cwd = current_cwd()?;
     let result = match cmd {
         BundleCmd::Validate => tkdbr::bundle_validate_local(&ctx, Some(&cwd)),
-        BundleCmd::Deploy => tkdbr::bundle_deploy_local(&ctx, Some(&cwd)),
+        BundleCmd::Deploy { force } => tkdbr::bundle_deploy_local(&ctx, Some(&cwd), *force),
         BundleCmd::Destroy => tkdbr::bundle_destroy_local(&ctx, Some(&cwd)),
         BundleCmd::Run { name, only } => {
             tkdbr::bundle_run_local(&ctx, name, only.as_deref(), Some(&cwd))

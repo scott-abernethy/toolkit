@@ -989,9 +989,13 @@ pub fn bundle_validate(config: &ConnConfig, cwd: Option<&str>) -> Result<Value> 
     Ok(json!({"ok": true}))
 }
 
-pub fn bundle_deploy(config: &ConnConfig, cwd: Option<&str>) -> Result<Value> {
+pub fn bundle_deploy(config: &ConnConfig, cwd: Option<&str>, force: bool) -> Result<Value> {
     let target = config.get_bundle_target();
-    run_databricks_no_json(config, &["bundle", "deploy", "-t", &target], cwd)?;
+    let mut args = vec!["bundle", "deploy", "-t", &target];
+    if force {
+        args.push("--force");
+    }
+    run_databricks_no_json(config, &args, cwd)?;
     Ok(json!({"ok": true}))
 }
 
@@ -1041,8 +1045,12 @@ pub fn bundle_validate_local(ctx: &BundleContext, cwd: Option<&str>) -> Result<V
     Ok(json!({"ok": true}))
 }
 
-pub fn bundle_deploy_local(ctx: &BundleContext, cwd: Option<&str>) -> Result<Value> {
-    run_bundle_no_json(ctx, &["bundle", "deploy", "-t", &ctx.bundle_target], cwd)?;
+pub fn bundle_deploy_local(ctx: &BundleContext, cwd: Option<&str>, force: bool) -> Result<Value> {
+    let mut args = vec!["bundle", "deploy", "-t", &ctx.bundle_target];
+    if force {
+        args.push("--force");
+    }
+    run_bundle_no_json(ctx, &args, cwd)?;
     Ok(json!({"ok": true}))
 }
 

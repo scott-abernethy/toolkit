@@ -127,6 +127,9 @@ tkdbr bundle validate --conn <conn>
 # Deploy the bundle to the configured target
 tkdbr bundle deploy --conn <conn>
 
+# Force-deploy, overriding a remote-modified resource (e.g. a dashboard edited outside the bundle)
+tkdbr bundle deploy --conn <conn> --force
+
 # Run a named resource from the bundle
 tkdbr bundle run my-job --conn <conn>
 

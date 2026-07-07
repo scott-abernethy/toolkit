@@ -149,6 +149,7 @@ tkdbr --conn prod warehouses get --warehouse-id abc-123
 # Bundle commands run in the caller's current directory so they can see the local bundle files.
 tkdbr --conn prod bundle validate
 tkdbr --conn prod bundle deploy
+tkdbr --conn prod bundle deploy --force  # override remote modifications (e.g. a dashboard edited outside the bundle)
 tkdbr --conn prod bundle run my-job
 tkdbr --conn prod bundle destroy
 ```

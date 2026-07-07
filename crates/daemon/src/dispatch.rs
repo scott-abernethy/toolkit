@@ -296,6 +296,8 @@ enum DbrOp {
     BundleDeploy {
         #[serde(default)]
         cwd: Option<String>,
+        #[serde(default)]
+        force: bool,
     },
     #[serde(rename = "bundle/destroy")]
     BundleDestroy {
@@ -383,8 +385,8 @@ fn dispatch_dbr_sync(config: &tkdbr::ConnConfig, op: DbrOp) -> Response {
         DbrOp::BundleValidate { cwd } => {
             to_value_result(tkdbr::bundle_validate(config, cwd.as_deref()))
         }
-        DbrOp::BundleDeploy { cwd } => {
-            to_value_result(tkdbr::bundle_deploy(config, cwd.as_deref()))
+        DbrOp::BundleDeploy { cwd, force } => {
+            to_value_result(tkdbr::bundle_deploy(config, cwd.as_deref(), force))
         }
         DbrOp::BundleDestroy { cwd } => {
             to_value_result(tkdbr::bundle_destroy(config, cwd.as_deref()))
@@ -565,7 +567,19 @@ mod tests {
     fn dbr_bundle_deploy_without_cwd_defaults_to_none() {
         let op: DbrOp = parse_op("dbr", "bundle/deploy", &json!({})).unwrap();
         match op {
-            DbrOp::BundleDeploy { cwd } => assert!(cwd.is_none()),
+            DbrOp::BundleDeploy { cwd, force } => {
+                assert!(cwd.is_none());
+                assert!(!force);
+            }
+            _ => panic!("expected BundleDeploy"),
+        }
+    }
+
+    #[test]
+    fn dbr_bundle_deploy_force_parses() {
+        let op: DbrOp = parse_op("dbr", "bundle/deploy", &json!({"force": true})).unwrap();
+        match op {
+            DbrOp::BundleDeploy { force, .. } => assert!(force),
             _ => panic!("expected BundleDeploy"),
         }
     }
