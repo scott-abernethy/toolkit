@@ -22,6 +22,11 @@ pub struct ConnConfig {
     /// Trust the server certificate without validation (common for on-prem
     /// servers with self-signed certs). Default: false.
     pub trust_cert: Option<bool>,
+    /// Connect with `ApplicationIntent=ReadOnly`. Required for databases in an
+    /// availability group (Azure SQL MI, failover group listeners) that only
+    /// accept read-intent connections, and routes reads to a readable
+    /// secondary where one exists. Default: false.
+    pub readonly_intent: Option<bool>,
     /// Tables the agent is permitted to write to (INSERT/UPDATE/DELETE/TRUNCATE).
     /// If absent or empty, the connection is treated as strictly read-only.
     pub writable_tables: Option<Vec<String>>,
@@ -38,6 +43,10 @@ impl ConnConfig {
 
     fn trust_cert(&self) -> bool {
         self.trust_cert.unwrap_or(false)
+    }
+
+    fn readonly_intent(&self) -> bool {
+        self.readonly_intent.unwrap_or(false)
     }
 }
 
@@ -65,6 +74,10 @@ async fn connect(config: &ConnConfig) -> Result<Client<tokio_util::compat::Compa
 
         if config.trust_cert() {
             cfg.trust_cert();
+        }
+
+        if config.readonly_intent() {
+            cfg.readonly(true);
         }
 
         if !config.use_tls() {
@@ -110,8 +123,18 @@ fn sanitize_connect_error(e: &std::io::Error) -> ToolkitError {
 }
 
 fn sanitize_tds_error(e: &tiberius::error::Error) -> ToolkitError {
-    let msg = e.to_string().to_lowercase();
-    if msg.contains("login failed") || msg.contains("authentication") {
+    classify_tds_error(&e.to_string())
+}
+
+fn classify_tds_error(raw: &str) -> ToolkitError {
+    let msg = raw.to_lowercase();
+    if msg.contains("application intent") {
+        // Error 978: the database is an availability-group replica that only
+        // accepts read-intent connections.
+        ToolkitError::connection(
+            "database requires read-only intent; set `readonly_intent: true` for this connection",
+        )
+    } else if msg.contains("login failed") || msg.contains("authentication") {
         ToolkitError::auth("authentication failed")
     } else if msg.contains("cannot open database") {
         ToolkitError::not_found("database does not exist")
@@ -121,13 +144,7 @@ fn sanitize_tds_error(e: &tiberius::error::Error) -> ToolkitError {
         ToolkitError::connection("ssl error")
     } else {
         // Take only the first line to avoid leaking verbose error details.
-        ToolkitError::other(
-            e.to_string()
-                .lines()
-                .next()
-                .unwrap_or("query error")
-                .to_string(),
-        )
+        ToolkitError::other(raw.lines().next().unwrap_or("query error").to_string())
     }
 }
 
@@ -312,4 +329,46 @@ pub async fn describe_table(config: &ConnConfig, table: &str) -> Result<QueryRes
     )
     .await?;
     Ok(QueryResponse::new(columns, rows))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn conn_from_yaml(yaml: &str) -> ConnConfig {
+        serde_yaml::from_str(yaml).unwrap()
+    }
+
+    const MINIMAL: &str = "host: sql.example.com\ndatabase: mydb\nuser: readonly\n";
+
+    #[test]
+    fn readonly_intent_defaults_to_off() {
+        assert!(!conn_from_yaml(MINIMAL).readonly_intent());
+    }
+
+    #[test]
+    fn readonly_intent_reads_from_config() {
+        let cfg = conn_from_yaml(&format!("{MINIMAL}readonly_intent: true\n"));
+        assert!(cfg.readonly_intent());
+    }
+
+    #[test]
+    fn application_intent_error_points_at_the_config_key() {
+        let err = classify_tds_error(
+            "Token error: 'The target database ('mydb') is in an availability group and is \
+             currently accessible for connections when the application intent is set to read \
+             only.' on server sql.example.com (code: 978, state: 1, class: 14)",
+        );
+        assert_eq!(err.class(), "connection");
+        assert!(err.message().contains("readonly_intent: true"));
+        // The verbose server text (and the database name) must not leak through.
+        assert!(!err.message().contains("mydb"));
+    }
+
+    #[test]
+    fn unclassified_errors_keep_only_the_first_line() {
+        let err = classify_tds_error("something odd happened\nstack frame 1\nstack frame 2");
+        assert_eq!(err.class(), "other");
+        assert_eq!(err.message(), "something odd happened");
+    }
 }
