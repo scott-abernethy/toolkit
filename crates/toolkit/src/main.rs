@@ -479,6 +479,7 @@ msql:
     password: changeme
     tls: true
     trust_cert: false
+    # readonly_intent: true   # ApplicationIntent=ReadOnly (Azure SQL MI / AG replicas)
     writable_tables: []
 "
         }

@@ -59,6 +59,20 @@ msql:
     tls: true          # enable TLS (default: true)
     trust_cert: false  # trust self-signed certs (default: false)
 
+  # Azure SQL Managed Instance / availability group replica that only accepts
+  # read-intent connections. `readonly_intent` sets ApplicationIntent=ReadOnly
+  # on the connection; without it the server rejects the login with error 978
+  # ("...accessible for connections when the application intent is set to read only").
+  # It also routes reads to a readable secondary where one exists, so leave it
+  # off for connections that need writes.
+  sqlmi:
+    host: myinstance.public.abc123.database.windows.net
+    port: 3342
+    database: mydb
+    user: readonly
+    password: secret
+    readonly_intent: true
+
   # Connection with selective write access — only the listed tables can be mutated.
   # The database user should also have the corresponding privileges (e.g. db_datawriter role).
   # For read-only connections, use a user with only the db_datareader role.

@@ -82,6 +82,7 @@ If one connection is configured, `--conn` is optional; if multiple exist, `--con
 - Same write-detection logic and `writable_tables` allowlist as `tkpsql` (shared in `common::sql`)
 - Async runtime (`tiberius` over tokio) — distinct from `tkpsql`'s sync `postgres` driver
 - Supports on-prem servers with self-signed certs (`trust_cert: true`)
+- Supports availability-group replicas that require read-intent connections (`readonly_intent: true` → `ApplicationIntent=ReadOnly`)
 - Commands: `tables`, `describe --table <name>`, `query --sql <stmt>`
 
 ### `tkdbr` (Databricks)
