@@ -1,3 +1,4 @@
+use common::sql;
 use common::{Result, ToolkitError};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -34,6 +35,9 @@ pub struct ConnConfig {
     pub allow_job_runs: Option<bool>,
     /// Bundle target for bundle commands (e.g. "local", "dev", "prod")
     pub bundle_target: Option<String>,
+    /// Tables the agent is permitted to write to (INSERT/UPDATE/DELETE/CREATE/DROP/ALTER/etc).
+    /// If absent or empty, the connection is treated as strictly read-only.
+    pub writable_tables: Option<Vec<String>>,
     /// Connection name (not from config file — set by load_config)
     #[serde(skip)]
     pub conn_name: String,
@@ -848,6 +852,18 @@ const QUERY_MAX_POLLS: u32 = 60;
 /// Delay between poll attempts.
 const QUERY_POLL_INTERVAL: Duration = Duration::from_secs(2);
 
+/// Authorise every write/DDL target detected in `sql`. Multi-statement input like
+/// `CREATE TABLE allowed (...); DROP TABLE forbidden` only passes if every target
+/// is on the allowlist. Returns the detected targets so callers can also decide
+/// whether it's safe to append a LIMIT clause.
+fn check_write_permission(config: &ConnConfig, sql: &str) -> Result<Vec<String>> {
+    let write_targets = sql::detect_write_targets(sql);
+    for table in &write_targets {
+        sql::assert_write_allowed(config.writable_tables.as_ref(), table)?;
+    }
+    Ok(write_targets)
+}
+
 /// Execute a SQL query via the Statement Execution API.
 /// Uses `databricks api post /api/2.0/sql/statements` to submit, then polls if needed.
 pub fn query(
@@ -862,8 +878,11 @@ pub fn query(
         )
     })?;
 
-    // Apply LIMIT to the SQL if the user hasn't already included one
-    let statement = if limit > 0 && !has_limit_clause(sql) {
+    let write_targets = check_write_permission(config, sql)?;
+
+    // Apply LIMIT to the SQL if the user hasn't already included one. Writes/DDL
+    // (CREATE TABLE, INSERT, ...) don't take a LIMIT clause, so skip injection.
+    let statement = if limit > 0 && write_targets.is_empty() && !has_limit_clause(sql) {
         format!("{} LIMIT {}", sql.trim().trim_end_matches(';'), limit)
     } else {
         sql.trim().trim_end_matches(';').to_string()
@@ -1106,6 +1125,44 @@ pub fn bundle_run_local(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn test_config(writable_tables: Option<Vec<String>>) -> ConnConfig {
+        ConnConfig {
+            command: default_databricks_command(),
+            env: HashMap::new(),
+            allow_job_runs: None,
+            bundle_target: None,
+            writable_tables,
+            conn_name: "test".to_string(),
+        }
+    }
+
+    #[test]
+    fn test_check_write_permission_allows_select() {
+        let config = test_config(None);
+        assert_eq!(check_write_permission(&config, "SELECT * FROM t").unwrap(), Vec::<String>::new());
+    }
+
+    #[test]
+    fn test_check_write_permission_denies_by_default() {
+        let config = test_config(None);
+        assert!(check_write_permission(&config, "CREATE TABLE t (id INT)").is_err());
+    }
+
+    #[test]
+    fn test_check_write_permission_allows_listed_table() {
+        let config = test_config(Some(vec!["t".to_string()]));
+        assert_eq!(
+            check_write_permission(&config, "CREATE TABLE t (id INT)").unwrap(),
+            vec!["t".to_string()]
+        );
+    }
+
+    #[test]
+    fn test_check_write_permission_denies_unlisted_table() {
+        let config = test_config(Some(vec!["allowed".to_string()]));
+        assert!(check_write_permission(&config, "DROP TABLE forbidden").is_err());
+    }
 
     #[test]
     fn test_sanitize_auth_error() {
