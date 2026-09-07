@@ -89,6 +89,7 @@ If one connection is configured, `--conn` is optional; if multiple exist, `--con
 
 - Wraps Databricks CLI and REST API; credentials injected via env vars (`DATABRICKS_HOST`, `DATABRICKS_TOKEN`)
 - All read operations are safe by default; `allow_job_runs = true` required to trigger jobs
+- `query` uses the same write-detection + `writable_tables` allowlist as `tkpsql`/`tkmsql` (shared in `common::sql`): writes/DDL (INSERT, CREATE TABLE, DROP TABLE, ...) are denied unless the target table is listed
 - Bundle operations: `validate`, `deploy`, `run`, `destroy`
 - Commands: `catalogs`, `schemas`, `tables`, `jobs`, `runs`, `clusters`, `warehouses`, `bundle`, `query`, `auth login`
 - Output includes sensible defaults (e.g., `--limit 25` for jobs, `--limit 100` for queries)

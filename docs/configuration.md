@@ -103,6 +103,18 @@ dbr:
     allow_job_runs: false                # permit jobs trigger (default: false)
     bundle_target: dev                   # bundle target (default: "local")
 
+  # Connection with selective write access via `tkdbr query` — writes/DDL
+  # (INSERT, CREATE TABLE, DROP TABLE, ...) are only permitted against the
+  # listed tables. If absent or empty, `query` is read-only.
+  migration:
+    env:
+      DATABRICKS_HOST: https://dbc-abc123.cloud.databricks.com
+      DATABRICKS_AUTH_TYPE: pat
+      DATABRICKS_TOKEN: dapi...
+      DATABRICKS_WAREHOUSE_ID: abc123
+    writable_tables:
+      - dit_subjects2
+
 ## toolkit guard
 
 The guard wraps any CLI with credential injection and command rules. Connections for guarded apps must include a `command` field.
